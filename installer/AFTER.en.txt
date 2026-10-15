@@ -1,0 +1,10 @@
+The desktop controller is installed.
+
+Next: open Setup & repair, review requirements, prepare and restart manually if needed, then install the original Sarab driver. Choose your own target and select Apply and verify. A fresh driver installation starts paused.
+
+Change English / Simplified Chinese instantly in Settings. Logon startup is off by default.
+
+Closing the window normally hides it in the tray. Exiting or uninstalling the GUI keeps the driver and its current virtual location. To remove the driver, use Setup & repair first; Windows may then return to real location sources. See the bundled guide for certificate and test-mode cleanup.
+
+Core driver and CLI: TheMRVX / Sarab v1.0.0, original MIT license retained.
+Desktop GUI and setup companion: Kreeli and contributors.

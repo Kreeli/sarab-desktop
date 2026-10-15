@@ -1,0 +1,17 @@
+Sarab Desktop
+Copyright 2026 Kreeli and Sarab Desktop contributors.
+
+This independent desktop companion includes the original Sarab v1.0.0
+driver and CLI developed by TheMRVX:
+https://github.com/TheMRVX/sarab/tree/v1.0.0
+Copyright (c) 2026 TheMRVX, MIT License.
+
+TheMRVX created Sarab's virtual GNSS driver, core location functionality,
+CLI, and original web interface. Sarab Desktop adds an independently
+implemented Windows desktop GUI, localization, configuration management
+and installation guidance. It does not claim authorship of Sarab's core,
+and is not an official upstream release or endorsed by its author.
+
+The pinned v1.0.0 dependency is distributed under its original MIT license.
+The upstream main branch now uses Apache-2.0; that newer code is not bundled.
+See backend/Sarab-LICENSE.txt and THIRD-PARTY-NOTICES.md.

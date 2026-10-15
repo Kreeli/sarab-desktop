@@ -1,0 +1,14 @@
+{
+  "sarabVersion": "v1.0.0",
+  "sarabSourceCommit": "7b0b40cba88b78196858303284a2d1f576903b14",
+  "sarabUrl": "https://github.com/TheMRVX/sarab/releases/download/v1.0.0/sarab-v1.0.0-x64.zip",
+  "archiveSha256": "e0f6dcc3bd35c0eedb85164a9a0bd43aa1ddccae7192a5b27c0c3a84816fda2f",
+  "files": {
+    "sarab.exe": "8d8614a9b44658d2a1c4440e829078b6fe61c9e8ab735d53aedfeae33e2aa0e4",
+    "SarabGnss.dll": "f7f09ae07d45b85b16b758d012bffd0d54fc1e930c14121d42ae20fd90c9397f",
+    "SarabGnss.cat": "c0f53fe5ea71fed3df09565157961ed7de97d085fbdc1b1767c89c732dc39ac2",
+    "SarabGnss.inf": "37c74deddcc3dbb1cf5d7f9679f4efbb98def4a099158a002b8c30a4989855f5",
+    "SarabGnss.cer": "73a183197d904f217c78241dbec8a5881394ee314fd0ba5079a4a90b52049842",
+    "LICENSE": "0ac917156246a4d3dd67bb94bac73d8252f4e61b396a9981a918c8351ca2ca4b"
+  }
+}

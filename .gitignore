@@ -1,0 +1,12 @@
+/build/
+/dist/
+/releases/
+/tools/
+/vendor/
+/locales/missing.json
+*.obj
+*.pdb
+*.user
+*.log
+*.lnk
+.vs/

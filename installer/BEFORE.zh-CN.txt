@@ -1,0 +1,12 @@
+Sarab Desktop 是 Sarab 的独立桌面 GUI。
+
+虚拟 GNSS 驱动、定位核心、Rust CLI 和原网页控制台由 TheMRVX 开发：
+https://github.com/TheMRVX/sarab
+
+我们负责 Windows GUI、中英语言支持、配置管理与安装引导，并非原项目官方版本。
+
+此安装程序只复制上位机与固定的 Sarab v1.0.0 驱动包，不会静默安装驱动、更改启动配置、修改 Secure Boot、暂停磁盘保护、开启位置权限或重启电脑。
+
+原版驱动使用测试签名。完整功能要求 x64 电脑、管理员授权、Secure Boot 关闭、测试签名已生效及手动允许定位。安装后请进入“安装与修复”按步骤处理；部分原装 Windows 11 电脑需要手动准备。
+
+安装包不含开发电脑的私人坐标、收藏、Key 或日志。

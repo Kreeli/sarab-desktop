@@ -1,0 +1,12 @@
+Sarab Desktop is an independent desktop GUI for Sarab.
+
+The virtual GNSS driver, core location functionality, Rust CLI and original web interface are by TheMRVX:
+https://github.com/TheMRVX/sarab
+
+We add the Windows GUI, English/Chinese localization, configuration management and installation guidance. This is not an official upstream release.
+
+This installer copies the app and pinned Sarab v1.0.0 driver package. It does not silently install the driver, change boot settings, modify Secure Boot, suspend disk protection, enable location permissions or restart your PC.
+
+The driver is test-signed. Full functionality requires an x64 PC, administrator approval, Secure Boot off, active Windows test signing and manual location permission. See Setup & repair after installation. Some default Windows 11 configurations require manual preparation.
+
+No personal coordinates, favorites, keys or logs from the development computer are included.

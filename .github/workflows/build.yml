@@ -1,0 +1,34 @@
+name: Windows packages
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build GUI and native location reader
+        shell: pwsh
+        run: ./Build.ps1
+      - name: Run checks without installing a driver
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path build/test-results -Force | Out-Null
+          $test = Start-Process -FilePath ./dist/SarabDesktop.exe -ArgumentList '--self-test "build/test-results/self-test.json"' -PassThru -Wait
+          if ($test.ExitCode -ne 0) { Get-Content build/test-results/self-test.json; throw 'Self-test failed' }
+      - name: Create installer and portable ZIP
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' } }
+          ./scripts/Package.ps1 -Iscc $iscc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SarabDesktop-Windows-x64
+          path: releases/*
+          if-no-files-found: error

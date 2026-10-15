@@ -1,0 +1,65 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sarab Desktop · Help</title><style>body{margin:40px auto;padding:0 28px 60px;max-width:900px;background:#191923;color:#eeeaf9;font:16px/1.8 system-ui,"Microsoft YaHei UI",sans-serif}h1,h2{color:#c9bbff;line-height:1.3;margin-top:1.6em}a{color:#c9bbff}code{font-family:Consolas,monospace;background:#2a263b;padding:2px 5px;border-radius:4px}pre{background:#22222f;border:1px solid #454055;border-radius:12px;padding:18px;overflow:auto}pre code{background:none;padding:0}strong{color:#fff}p{margin:14px 0}</style><h1>Install, verify and remove</h1>
+
+<p><a href="INSTALL.zh-CN.html">简体中文</a> &#183; <a href="https://github.com/Kreeli/sarab-desktop">Project home</a></p>
+
+<p>Sarab&#39;s original driver and CLI are by <a href="https://github.com/TheMRVX/sarab">TheMRVX</a>. Sarab Desktop is an independent GUI and installation companion. The pinned v1.0.0 driver is <strong>test-signed</strong>, which is an important limitation of this release.</p>
+
+<h2>1. Install the controller</h2>
+
+<p>Run <code>SarabDesktop-1.1.0-Setup-x64.exe</code>, select English or Simplified Chinese, and choose a folder. It installs for the current user, creates Start Menu shortcuts and an uninstaller, and can open <strong>Setup &amp; repair</strong> afterwards. It does not install a driver, enable test mode or turn on autostart silently. A portable ZIP provides the same app and driver package.</p>
+
+<p>No SDK, Rust, Node.js, Python or separate VC++ redistributable is needed. Use Windows 10 1809+ / Windows 11 on an x64 PC. ARM64 is unsupported. The app binaries are not publisher-signed; Windows may show an unknown publisher. Obtain them only from the project&#39;s release and compare SHA256SUMS.</p>
+
+<h2>2. Check system requirements</h2>
+
+<p>Open <strong>Setup &amp; repair</strong> and refresh. If the driver is already healthy, leave it installed and proceed to location setup. Otherwise check:</p>
+
+<p>- <strong>Secure Boot:</strong> the test driver requires it off. The app does not modify UEFI. Follow the PC manufacturer&#39;s instructions; do not change firmware without having any required disk recovery key.</p>
+<p>- <strong>Disk protection:</strong> back up your BitLocker / Device Encryption recovery key before changing Secure Boot or boot settings. The helper will not change boot settings while disk protection is active, encryption/decryption is in progress, or the state cannot be confirmed.</p>
+<p>- <strong>Test signing:</strong> the preparation button backs up BCD under <code>%PROGRAMDATA%\SarabDesktop\Setup</code>, checks the above conditions with administrator rights, then runs <code>bcdedit /set {current} testsigning on</code>. This relaxes driver signature restrictions and may display the Windows Test Mode watermark. A manual restart is required.</p>
+
+<p>On a BitLocker-encrypted system, <strong>full decryption is not required</strong>: after saving the recovery key, suspend protection yourself for the required restart, and confirm it resumes afterwards. In an elevated terminal, an example for the system drive is:</p>
+
+<pre><code>
+manage-bde -status C:
+manage-bde -protectors -disable C: -RebootCount 1
+</code></pre>
+
+<p>Use the actual system-drive letter if different. Device encryption, organizational policies or firmware changes may require a different recovery procedure; use your device/organization instructions. The app never suspends protection or stores recovery keys. If it cannot confirm the disk state, it stops; it does not guess. Review the local BCD backup and use Microsoft&#39;s documented manual process if your supported system lacks the management interface. Do not disable security controls you are required to keep enabled.</p>
+
+<p>Click <strong>Check and prepare Windows</strong>, approve UAC, then restart at a time you choose. Reopen Setup &amp; repair afterwards; “Test signing: Active in this boot” must be shown before installation. No automatic reboot is scheduled.</p>
+
+<h2>3. Install the driver</h2>
+
+<p>Click <strong>Install / repair original driver</strong> and read the confirmation. UAC elevates only <code>SarabDesktop.Helper.exe</code>. It verifies the pinned CLI, DLL, catalog, INF and certificate, then invokes the original Sarab installer.</p>
+
+<p>This imports the upstream test certificate (thumbprint <code>40BDA793F3AE6F6A12022D05497D43D9154793EE</code>) into LocalMachine <strong>Root</strong> and <strong>TrustedPublisher</strong>, and registers <code>Root\SarabGnss</code>. The helper checks the PnP hardware identity and ProblemCode=0; successful console output alone is not proof. Setup logs and boot backups are under <code>%PROGRAMDATA%\SarabDesktop\Setup</code>.</p>
+
+<p>A healthy existing driver is not reinstalled. A new/repaired device starts with virtual location paused. No sample location is automatically applied. If the device is not healthy, review Device Manager and <code>%WINDIR%\INF\setupapi.dev.log</code>. Code 52 commonly indicates a signing issue; other policies, Memory Integrity or a pending restart may affect loading. The app does not turn off Memory Integrity or force a restart.</p>
+
+<h2>4. Choose and verify a location</h2>
+
+<p>Open Windows Settings → Privacy &amp; security → Location. Allow location services and desktop-app access yourself. The app only opens this page; it does not change permissions.</p>
+
+<p>In Overview, choose your own latitude/longitude and select <strong>Apply and verify</strong>, approving UAC. A verified state requires a fresh actual Windows Geolocator reading from the satellite source close to the driver&#39;s configured point. Readings expire after 60 seconds; select Verify to sample again. The initial London example is not applied automatically. For an app or browser, also grant that app/site permission and test it separately.</p>
+
+<h2>Upgrade and uninstall</h2>
+
+<p>Exit the controller using its tray menu before upgrading. Your <code>%LOCALAPPDATA%\SarabDesktop</code> settings, favorites and encrypted key are retained. An installed GUI can be removed from Windows Installed Apps; this <strong>keeps the driver and its current virtual location</strong> and preserves user data.</p>
+
+<p>To remove the driver, first open Setup &amp; repair → <strong>Remove Sarab driver</strong>. This may let Windows use real location sources again. After confirmation and UAC, only devices with the exact Sarab hardware ID and verified corresponding OEM INF packages are removed. Shared test certificates and global test signing are retained because another installation may rely on them.</p>
+
+<p>If you no longer use any test-signed drivers, you may manually disable test mode in an elevated terminal and restart:</p>
+
+<pre><code>
+bcdedit /set {current} testsigning off
+</code></pre>
+
+<p>Do not restore the entire saved BCD blindly, or remove certificates used by another installation. If you have confirmed this certificate is no longer needed, remove <strong>only the exact thumbprint above</strong> from LocalMachine Root and TrustedPublisher using Windows certificate management. Restore Secure Boot according to your PC&#39;s instructions, with recovery-key precautions. Never remove unrelated trust roots.</p>
+
+<h2>References</h2>
+
+<p>- <a href="https://github.com/TheMRVX/sarab/tree/v1.0.0">Sarab v1.0.0 instructions</a></p>
+<p>- <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option">Microsoft: test-signing boot option</a></p>
+<p>- <a href="https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors">Microsoft: manage-bde protectors</a></p>
+</html>
