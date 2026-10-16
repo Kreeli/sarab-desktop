@@ -6,7 +6,7 @@
 
 <h2>1. Install the controller</h2>
 
-<p>Run <code>SarabDesktop-1.1.0-Setup-x64.exe</code>, select English or Simplified Chinese, and choose a folder. It installs for the current user, creates Start Menu shortcuts and an uninstaller, and can open <strong>Setup &amp; repair</strong> afterwards. It does not install a driver, enable test mode or turn on autostart silently. A portable ZIP provides the same app and driver package.</p>
+<p>Run <code>SarabDesktop-1.1.0-Setup-x64.exe</code> and select English or Simplified Chinese. Setup requests administrator approval and installs for all users in the protected <code>Program Files\SarabDesktop</code> folder, then creates Start Menu shortcuts and an uninstaller. It can open <strong>Setup &amp; repair</strong> afterwards but does not install a driver, enable test mode or turn on autostart silently. A portable ZIP provides standard-user features only; administrator actions require the installed copy.</p>
 
 <p>No SDK, Rust, Node.js, Python or separate VC++ redistributable is needed. Use Windows 10 1809+ / Windows 11 on an x64 PC. ARM64 is unsupported. The app binaries are not publisher-signed; Windows may show an unknown publisher. Obtain them only from the project&#39;s release and compare SHA256SUMS.</p>
 
@@ -31,7 +31,7 @@ manage-bde -protectors -disable C: -RebootCount 1
 
 <h2>3. Install the driver</h2>
 
-<p>Click <strong>Install / repair original driver</strong> and read the confirmation. UAC elevates only <code>SarabDesktop.Helper.exe</code>. It verifies the pinned CLI, DLL, catalog, INF and certificate, then invokes the original Sarab installer.</p>
+<p>Click <strong>Install / repair original driver</strong> and read the confirmation. UAC elevates only <code>SarabDesktop.Helper.exe</code> from the protected install folder. It verifies the pinned CLI, DLL, catalog, INF and certificate, then invokes the original Sarab installer. Administrator actions are blocked when the app runs from a portable or user-writable folder.</p>
 
 <p>This imports the upstream test certificate (thumbprint <code>40BDA793F3AE6F6A12022D05497D43D9154793EE</code>) into LocalMachine <strong>Root</strong> and <strong>TrustedPublisher</strong>, and registers <code>Root\SarabGnss</code>. The helper checks the PnP hardware identity and ProblemCode=0; successful console output alone is not proof. Setup logs and boot backups are under <code>%PROGRAMDATA%\SarabDesktop\Setup</code>.</p>
 

@@ -2,11 +2,11 @@
 
 [English](README.md) | 简体中文
 
-**为 [TheMRVX 的 Sarab 原项目](https://github.com/TheMRVX/sarab) 制作的独立 Windows 桌面 GUI。** 虚拟 GNSS 驱动和定位核心由 Sarab 提供；本项目新增桌面控制界面、中英语言支持和安装引导，并非上游官方发布。
+**为 [TheMRVX 的 Sarab 原项目](https://github.com/TheMRVX/sarab) 制作的独立 Windows 桌面 GUI。** 虚拟 GNSS 驱动和定位核心由 Sarab 提供；本项目新增桌面控制界面、中英日繁四语支持和安装引导，并非上游官方发布。
 
 ## 下载与安装
 
-在 [Releases](https://github.com/Kreeli/sarab-desktop/releases) 下载 **`SarabDesktop-1.1.0-Setup-x64.exe`**，或选择便携 ZIP。两者均包含固定的、未经修改的 Sarab v1.0.0 驱动与 CLI，朋友无需安装开发工具或另外下载驱动。
+在 [Releases](https://github.com/Kreeli/sarab-desktop/releases) 下载 **`SarabDesktop-1.1.0-Setup-x64.exe`**。安装程序需要管理员确认，并将应用安装到受保护的 Program Files 目录，避免普通用户进程替换驱动工具。便携 ZIP 可用于普通权限功能，但不能执行驱动安装或位置写入等管理员操作。
 
 1. 运行安装程序，选择中文或英文，然后打开上位机。
 2. 进入**安装与修复**，检查系统架构、Secure Boot、当前测试签名、驱动和位置权限。
@@ -17,7 +17,8 @@
 
 ## 功能
 
-- 在设置中即时切换**简体中文 / English**，自动记住选择；保留自己的地点名称和已有日志。
+- 在设置中即时切换**自动跟随系统、简体中文、繁體中文、日本語和 English**，自动记住选择；保留自己的地点名称和已有日志。
+- 选择跟随 Windows、日间或夜间外观，更换强调色并将界面缩放到 90–125%；设置立即生效并保存。
 - 支持经纬度、度分秒、Google Maps 坐标链接与手动地址查询。默认 OpenStreetMap / Nominatim；Google 地址 API 使用自己的 Key。
 - 应用与暂停虚拟位置，设置海拔、精度和漂移；独立读取 Windows Geolocator 核验，不把配置开关当作生效证明。
 - 收藏导入导出、撤销移除、本地日志、系统托盘和可选登录自启动（默认关闭）。

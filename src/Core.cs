@@ -39,8 +39,15 @@ namespace SarabDesktop
 
     public sealed class AppSettings
     {
+        public const double DefaultSidebarWidth = 220;
+        public const double MinSidebarWidth = 76;
+        public const double MaxSidebarWidth = 360;
         public int SchemaVersion { get; set; } = 1;
-        public string Language { get; set; } = L.SystemLanguage;
+        public string Language { get; set; } = "auto";
+        public string ThemeMode { get; set; } = "system";
+        public string AccentColor { get; set; } = "mint";
+        public int FontScale { get; set; } = 100;
+        public double SidebarWidth { get; set; } = DefaultSidebarWidth;
         public LocationProfile Target { get; set; } = LocationProfile.Example();
         public List<LocationProfile> Favorites { get; set; } = new List<LocationProfile>();
         public bool CloseToTray { get; set; } = true;
@@ -50,6 +57,11 @@ namespace SarabDesktop
         public string Geocoder { get; set; } = "OpenStreetMap";
         public string GoogleKeyProtected { get; set; }
         public string LastAppliedUtc { get; set; }
+        public static double NormalizeSidebarWidth(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return DefaultSidebarWidth;
+            return Math.Max(MinSidebarWidth, Math.Min(MaxSidebarWidth, value));
+        }
     }
 
     public static class Json
@@ -60,8 +72,10 @@ namespace SarabDesktop
 
     public sealed class SettingsStore
     {
+        bool newerSchemaReadOnly, newerSchemaNoticeLogged;
         public string DirectoryPath { get; }
         public string FilePath => Path.Combine(DirectoryPath, "settings.json");
+        public bool IsReadOnlyDueToNewerSchema => newerSchemaReadOnly;
         public event Action<string> Logged;
         public SettingsStore(string directory = null)
         {
@@ -73,12 +87,36 @@ namespace SarabDesktop
             try
             {
                 if (!File.Exists(FilePath)) return new AppSettings();
-                var s = Json.From<AppSettings>(File.ReadAllText(FilePath, Encoding.UTF8));
+                string contents = File.ReadAllText(FilePath, Encoding.UTF8);
+                var raw = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 }.DeserializeObject(contents) as Dictionary<string, object>;
+                object versionValue;
+                int version;
+                if (raw != null && raw.TryGetValue("SchemaVersion", out versionValue) && int.TryParse(Convert.ToString(versionValue, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out version) && version > new AppSettings().SchemaVersion)
+                {
+                    newerSchemaReadOnly = true;
+                    Log(L.T("检测到较新版本的配置，当前版本将以只读方式打开以保护原配置。"));
+                    return new AppSettings();
+                }
+                var s = Json.From<AppSettings>(contents);
                 if (s == null || s.Target == null) throw new InvalidDataException(L.T("配置缺少目标坐标。"));
                 s.Target.Validate();
-                s.Favorites = (s.Favorites ?? new List<LocationProfile>()).Where(p => p != null && CoordinateParser.Valid(p.Latitude, p.Longitude)).Take(200).ToList();
+                var validFavorites = new List<LocationProfile>();
+                int rejectedFavorites = 0;
+                foreach (var favorite in s.Favorites ?? new List<LocationProfile>())
+                {
+                    if (favorite == null) { rejectedFavorites++; continue; }
+                    try { favorite.Validate(); validFavorites.Add(favorite); }
+                    catch (ArgumentException) { rejectedFavorites++; }
+                    if (validFavorites.Count == 200) break;
+                }
+                s.Favorites = validFavorites;
+                if (rejectedFavorites > 0) Log(L.T("配置中的无效收藏已忽略：") + rejectedFavorites);
                 if (s.Geocoder != "Google" && s.Geocoder != "OpenStreetMap") s.Geocoder = "OpenStreetMap";
-                if (s.Language != "zh-CN" && s.Language != "en-US") s.Language = L.SystemLanguage;
+                if (s.Language != "auto" && s.Language != "zh-CN" && s.Language != "zh-TW" && s.Language != "ja-JP" && s.Language != "en-US") s.Language = "auto";
+                if (s.ThemeMode != "system" && s.ThemeMode != "light" && s.ThemeMode != "dark") s.ThemeMode = "system";
+                if (s.AccentColor != "mint" && s.AccentColor != "ocean" && s.AccentColor != "violet" && s.AccentColor != "amber") s.AccentColor = "mint";
+                if (s.FontScale < 90 || s.FontScale > 125) s.FontScale = 100;
+                s.SidebarWidth = AppSettings.NormalizeSidebarWidth(s.SidebarWidth);
                 return s;
             }
             catch (Exception ex)
@@ -91,7 +129,15 @@ namespace SarabDesktop
         }
         public void Save(AppSettings settings)
         {
+            if (newerSchemaReadOnly)
+            {
+                if (!newerSchemaNoticeLogged) { newerSchemaNoticeLogged = true; Log(L.T("检测到较新版本的配置，当前版本将以只读方式打开以保护原配置。")); }
+                throw new InvalidOperationException(L.T("检测到较新版本的配置，当前版本将以只读方式打开以保护原配置。"));
+            }
             settings.Target.Validate();
+            settings.SidebarWidth = AppSettings.NormalizeSidebarWidth(settings.SidebarWidth);
+            if (settings.Favorites == null || settings.Favorites.Count > 200) throw new InvalidDataException(L.T("最多支持 200 个收藏位置。"));
+            foreach (var favorite in settings.Favorites) { if (favorite == null) throw new InvalidDataException(L.T("收藏中含空记录。")); favorite.Validate(); }
             string temporary = FilePath + ".new";
             File.WriteAllText(temporary, Json.To(settings), new UTF8Encoding(false));
             if (File.Exists(FilePath)) File.Replace(temporary, FilePath, FilePath + ".backup");
@@ -197,8 +243,10 @@ namespace SarabDesktop
         }
         public static double Distance(double lat, double lon, double targetLat, double targetLon)
         {
+            if (!Valid(lat, lon) || !Valid(targetLat, targetLon)) throw new ArgumentOutOfRangeException(nameof(lat), L.T("纬度应为 -90～90，经度应为 -180～180。"));
             double rad = Math.PI / 180;
             double a = Math.Pow(Math.Sin((lat - targetLat) * rad / 2), 2) + Math.Cos(lat * rad) * Math.Cos(targetLat * rad) * Math.Pow(Math.Sin((lon - targetLon) * rad / 2), 2);
+            a = Math.Max(0, Math.Min(1, a));
             return 6371000 * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(Math.Max(0, 1 - a)));
         }
     }
@@ -212,6 +260,26 @@ namespace SarabDesktop
         public long timestampTicks { get; set; }
         public DateTime CapturedAt { get; set; } = DateTime.Now;
         public string SourceName => new[] { L.T("蜂窝网络"), L.T("卫星 / 虚拟 GNSS"), "Wi-Fi", L.T("IP 地址"), L.T("未知"), L.T("默认位置"), L.T("模糊位置") }.ElementAtOrDefault(positionSource) ?? L.T("未知");
+    }
+    public static class LocationVerification
+    {
+        public const double MaxReportedAccuracyMeters = 100000;
+        public const double MaxVerificationAccuracyMeters = 100;
+        public static bool IsValidProbe(ProbeResult probe)
+        {
+            return probe != null && CoordinateParser.Valid(probe.latitude, probe.longitude) &&
+                !double.IsNaN(probe.accuracyMeters) && !double.IsInfinity(probe.accuracyMeters) &&
+                probe.accuracyMeters >= 0 && probe.accuracyMeters <= MaxReportedAccuracyMeters &&
+                probe.positionSource >= 0 && probe.positionSource <= 6;
+        }
+        public static bool IsWithinConfiguredTolerance(LocationProfile configured, ProbeResult probe)
+        {
+            if (configured == null || !IsValidProbe(probe) || probe.positionSource != 1 || probe.accuracyMeters > MaxVerificationAccuracyMeters) return false;
+            try { configured.Validate(); } catch (ArgumentException) { return false; }
+            double reportedAccuracyAllowance = Math.Min(probe.accuracyMeters, 25);
+            double tolerance = configured.Drift ? Math.Max(25, configured.DriftRadius * 3 + reportedAccuracyAllowance) : 25;
+            return CoordinateParser.Distance(probe.latitude, probe.longitude, configured.Latitude, configured.Longitude) <= tolerance;
+        }
     }
     public sealed class DriverState
     {

@@ -6,7 +6,7 @@ Sarab's original driver and CLI are by [TheMRVX](https://github.com/TheMRVX/sara
 
 ## 1. Install the controller
 
-Run `SarabDesktop-1.1.0-Setup-x64.exe`, select English or Simplified Chinese, and choose a folder. It installs for the current user, creates Start Menu shortcuts and an uninstaller, and can open **Setup & repair** afterwards. It does not install a driver, enable test mode or turn on autostart silently. A portable ZIP provides the same app and driver package.
+Run `SarabDesktop-1.1.0-Setup-x64.exe` and select English or Simplified Chinese. Setup requests administrator approval and installs for all users in the protected `Program Files\SarabDesktop` folder, then creates Start Menu shortcuts and an uninstaller. It can open **Setup & repair** afterwards but does not install a driver, enable test mode or turn on autostart silently. A portable ZIP provides standard-user features only; administrator actions require the installed copy.
 
 No SDK, Rust, Node.js, Python or separate VC++ redistributable is needed. Use Windows 10 1809+ / Windows 11 on an x64 PC. ARM64 is unsupported. The app binaries are not publisher-signed; Windows may show an unknown publisher. Obtain them only from the project's release and compare SHA256SUMS.
 
@@ -31,7 +31,7 @@ Click **Check and prepare Windows**, approve UAC, then restart at a time you cho
 
 ## 3. Install the driver
 
-Click **Install / repair original driver** and read the confirmation. UAC elevates only `SarabDesktop.Helper.exe`. It verifies the pinned CLI, DLL, catalog, INF and certificate, then invokes the original Sarab installer.
+Click **Install / repair original driver** and read the confirmation. UAC elevates only `SarabDesktop.Helper.exe` from the protected install folder. It verifies the pinned CLI, DLL, catalog, INF and certificate, then invokes the original Sarab installer. Administrator actions are blocked when the app runs from a portable or user-writable folder.
 
 This imports the upstream test certificate (thumbprint `40BDA793F3AE6F6A12022D05497D43D9154793EE`) into LocalMachine **Root** and **TrustedPublisher**, and registers `Root\SarabGnss`. The helper checks the PnP hardware identity and ProblemCode=0; successful console output alone is not proof. Setup logs and boot backups are under `%PROGRAMDATA%\SarabDesktop\Setup`.
 

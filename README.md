@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 ## Download and install
 
-Get **`SarabDesktop-1.1.0-Setup-x64.exe`** from [Releases](https://github.com/Kreeli/sarab-desktop/releases). A portable ZIP is also available. Both contain the pinned, unmodified Sarab v1.0.0 driver and CLI; friends do not need development tools or a separate driver download.
+Get **`SarabDesktop-1.1.0-Setup-x64.exe`** from [Releases](https://github.com/Kreeli/sarab-desktop/releases). Setup asks for administrator approval and installs the app in the protected Program Files folder so its driver tools cannot be replaced by a standard-user process. A portable ZIP is also available for standard-user features; it cannot perform administrator actions such as driver installation or location writes.
 
 1. Run Setup, choose English or Simplified Chinese, and open the app.
 2. Open **Setup & repair**. It checks Windows architecture, Secure Boot, active test signing, the driver and location permissions.
@@ -17,7 +17,8 @@ Requires an **x64 PC with Windows 10 1809+ or Windows 11**. ARM64 is not support
 
 ## Features
 
-- **English / Simplified Chinese**, switched instantly in Settings and saved automatically. Your location names and existing log entries are preserved.
+- **Automatic system language, English, Simplified Chinese, Traditional Chinese, and Japanese**, switched instantly in Settings and saved automatically. Auto follows the Windows user's preferred display language. Your location names and existing log entries are preserved.
+- **System, light, and dark appearance**, with four accent colors and a 90–125% interface scale. Theme, accent, and scale apply immediately and persist.
 - Coordinates, DMS, Google Maps coordinate links and optional manual address search. OpenStreetMap / Nominatim is the default; Google Geocoding requires your own API key.
 - Apply/pause virtual location, altitude, accuracy and optional drift; independent Windows Geolocator verification instead of trusting a configuration switch.
 - Favorites with import/export and undo removal, local logs, system tray and optional sign-in startup (off by default).
