@@ -46,7 +46,7 @@ jobs:
         if: always()
         with:
           name: SarabDesktop-test-results
-          path: build/test-results/*
+          path: build/test-results/*.json
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
