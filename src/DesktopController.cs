@@ -56,9 +56,8 @@ namespace SarabDesktop
         TextBlock activeNoticeCertificateHeadline;
         TextBlock activeNoticeCertificateDetails;
         Button activeNoticeCertificateCloseButton;
-        MediaPlayer noticeMusicPlayer;
-        string activeNoticeMusicPath;
-        readonly HashSet<string> noticeMusicTempFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        EmbeddedPcmPlayer noticeMusicPlayer;
+        string activeNoticeMusicResource;
         string[] noticeMusicResources;
         int previousNoticeMusicIndex = -1;
         bool noticeMusicRequested;
@@ -899,31 +898,31 @@ namespace SarabDesktop
             noticeMusicRequested = true;
             PlayRandomNoticeTrack();
         }
-        MediaPlayer CreateNoticeMusicPlayer()
+        EmbeddedPcmPlayer CreateNoticeMusicPlayer()
         {
-            var player = new MediaPlayer { Volume = CertificateMusicVolume(preview), IsMuted = false };
+            var player = new EmbeddedPcmPlayer { Volume = CertificateMusicVolume(preview) };
             player.MediaOpened += (s, e) =>
             {
-                var media = s as MediaPlayer;
+                var media = s as EmbeddedPcmPlayer;
                 if (!noticeMusicRequested || !ReferenceEquals(media, noticeMusicPlayer)) return;
                 media.Play();
                 if (preview) noticeMusicSmokeOpened?.TrySetResult(true);
             };
-            player.MediaEnded += (s, e) => OnNoticeMusicTrackEnded(s as MediaPlayer);
+            player.MediaEnded += (s, e) => OnNoticeMusicTrackEnded(s as EmbeddedPcmPlayer);
             player.MediaFailed += (s, e) =>
             {
-                var media = s as MediaPlayer;
+                var media = s as EmbeddedPcmPlayer;
                 if (!ReferenceEquals(media, noticeMusicPlayer)) return;
                 noticeMusicRequested = false;
                 store.Log("Certificate music playback failed: " + (e.ErrorException?.Message ?? "unknown media error"));
-                try { media.Close(); } catch { }
+                try { media.Dispose(); } catch { }
                 noticeMusicPlayer = null;
-                DeleteActiveNoticeMusicFile();
+                activeNoticeMusicResource = null;
                 if (preview) noticeMusicSmokeOpened?.TrySetResult(false);
             };
             return player;
         }
-        void OnNoticeMusicTrackEnded(MediaPlayer endedPlayer)
+        void OnNoticeMusicTrackEnded(EmbeddedPcmPlayer endedPlayer)
         {
             try
             {
@@ -946,57 +945,26 @@ namespace SarabDesktop
             if (!noticeMusicRequested || noticeMusicResources == null || index < 0 || index >= noticeMusicResources.Length) return;
             var oldPlayer = noticeMusicPlayer;
             noticeMusicPlayer = null;
-            if (oldPlayer != null) { try { oldPlayer.Stop(); oldPlayer.Close(); } catch { } }
-            DeleteActiveNoticeMusicFile();
-            CleanupNoticeMusicFiles();
+            oldPlayer?.Dispose();
+            activeNoticeMusicResource = null;
             try
             {
-                string folder = Path.Combine(Path.GetTempPath(), "SarabDesktop", "NoticeMusic-" + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
-                Directory.CreateDirectory(folder);
-                activeNoticeMusicPath = Path.Combine(folder, "track-" + (index + 1).ToString("D2", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N") + ".wav");
-                using (var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(noticeMusicResources[index]))
+                activeNoticeMusicResource = noticeMusicResources[index];
+                using (var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(activeNoticeMusicResource))
                 {
-                    if (resource == null) throw new FileNotFoundException("Embedded certificate music resource is missing.", noticeMusicResources[index]);
-                    using (var output = new FileStream(activeNoticeMusicPath, FileMode.Create, FileAccess.Write, FileShare.Read)) resource.CopyTo(output);
+                    if (resource == null) throw new FileNotFoundException("Embedded certificate music resource is missing.", activeNoticeMusicResource);
+                    noticeMusicPlayer = CreateNoticeMusicPlayer();
+                    noticeMusicPlayer.Open(resource);
                 }
-                noticeMusicTempFiles.Add(activeNoticeMusicPath);
-                noticeMusicPlayer = CreateNoticeMusicPlayer();
-                noticeMusicPlayer.Open(new Uri(activeNoticeMusicPath, UriKind.Absolute));
             }
             catch (Exception ex)
             {
                 noticeMusicRequested = false;
                 store.Log("Certificate music could not be opened: " + ex.Message);
-                if (noticeMusicPlayer != null) { try { noticeMusicPlayer.Close(); } catch { } noticeMusicPlayer = null; }
-                DeleteActiveNoticeMusicFile();
-            }
-        }
-        void DeleteActiveNoticeMusicFile()
-        {
-            if (string.IsNullOrEmpty(activeNoticeMusicPath)) return;
-            string path = activeNoticeMusicPath;
-            activeNoticeMusicPath = null;
-            if (!TryDeleteNoticeMusicFile(path)) noticeMusicTempFiles.Add(path);
-            else noticeMusicTempFiles.Remove(path);
-        }
-        void CleanupNoticeMusicFiles()
-        {
-            foreach (string path in noticeMusicTempFiles.ToArray())
-            {
-                if (TryDeleteNoticeMusicFile(path)) noticeMusicTempFiles.Remove(path);
-            }
-        }
-        static bool TryDeleteNoticeMusicFile(string path)
-        {
-            try { if (File.Exists(path)) File.Delete(path); return !File.Exists(path); }
-            catch { return false; }
-        }
-        static async Task RetryDeleteNoticeMusicFiles(string[] paths)
-        {
-            foreach (int delay in new[] { 250, 750, 1500, 3000, 5000 })
-            {
-                await Task.Delay(delay).ConfigureAwait(false);
-                foreach (string path in paths) TryDeleteNoticeMusicFile(path);
+                noticeMusicPlayer?.Dispose();
+                noticeMusicPlayer = null;
+                activeNoticeMusicResource = null;
+                if (preview) noticeMusicSmokeOpened?.TrySetResult(false);
             }
         }
         internal static double CertificateMusicVolume(bool previewMode) => previewMode ? 0.0 : 1.0;
@@ -1011,15 +979,10 @@ namespace SarabDesktop
         void StopNoticeMusic()
         {
             noticeMusicRequested = false;
-            if (noticeMusicPlayer != null)
-            {
-                var player = noticeMusicPlayer;
-                noticeMusicPlayer = null;
-                try { player.Stop(); player.Close(); } catch { }
-            }
-            DeleteActiveNoticeMusicFile();
-            CleanupNoticeMusicFiles();
-            if (noticeMusicTempFiles.Count > 0) _ = RetryDeleteNoticeMusicFiles(noticeMusicTempFiles.ToArray());
+            var player = noticeMusicPlayer;
+            noticeMusicPlayer = null;
+            player?.Dispose();
+            activeNoticeMusicResource = null;
             previousNoticeMusicIndex = -1;
         }
         Window CreateNoticeCertificateWindow()
@@ -1314,11 +1277,12 @@ namespace SarabDesktop
             for (int i = 3; i < buffer.Length; i += 4) if (buffer[i] != 255) return false;
             return buffer.Length > 0;
         }
-        static void WriteNoticeMusicSmokeTrack(string path)
+        static MemoryStream CreateNoticeMusicSmokeTrack()
         {
             const int sampleRate = 11025;
             int dataLength = sampleRate;
-            using (var writer = new BinaryWriter(File.Create(path)))
+            var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, true))
             {
                 Action<string> writeFourCc = value => writer.Write(value.Select(character => (byte)character).ToArray());
                 writeFourCc("RIFF"); writer.Write(36 + dataLength); writeFourCc("WAVE");
@@ -1327,6 +1291,8 @@ namespace SarabDesktop
                 writeFourCc("data"); writer.Write(dataLength);
                 for (int i = 0; i < dataLength; i++) writer.Write((byte)(128 + 24 * Math.Sin(2 * Math.PI * 440 * i / sampleRate)));
             }
+            stream.Position = 0;
+            return stream;
         }
         public async Task UiSmokeAsync(string directory)
         {
@@ -1475,51 +1441,35 @@ namespace SarabDesktop
             settings.Language = "auto"; L.Set("zh-CN"); ApplyLocale();
             if (certificateLayout == null || certificateLayout.Children.OfType<Button>().Count() != 1 || certificateLayout.Children.OfType<Slider>().Any() || certificateLayout.Children.OfType<Border>().Select(item => item.Child as TextBlock).Where(item => item != null).Any(item => item.Text.IndexOf("复古喜庆音乐自动播放中", StringComparison.Ordinal) >= 0)) throw new InvalidDataException("The certificate added an unexpected music status message or playback control.");
             Task musicOpened = await Task.WhenAny(noticeMusicSmokeOpened.Task, Task.Delay(TimeSpan.FromSeconds(8)));
-            if (musicOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result) throw new InvalidDataException("The embedded 8-bit certificate music did not open successfully in muted UI preview mode; signal=" + noticeMusicSmokeOpened.Task.Status + "; path=" + activeNoticeMusicPath + "; exists=" + (!string.IsNullOrEmpty(activeNoticeMusicPath) && File.Exists(activeNoticeMusicPath)) + "; source=" + (noticeMusicPlayer?.Source?.ToString() ?? "null") + "; audio=" + noticeMusicPlayer?.HasAudio + "; duration=" + (noticeMusicPlayer?.NaturalDuration.ToString() ?? "null") + "; logs=" + store.ReadLog());
-            if (noticeMusicPlayer == null || noticeMusicPlayer.Volume != 0 || noticeMusicPlayer.IsMuted) throw new InvalidDataException("UI preview music was not safely muted.");
+            if (musicOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result) throw new InvalidDataException("The embedded PCM certificate music did not open on the native audio device in muted preview mode; logs=" + store.ReadLog());
+            if (noticeMusicPlayer == null || noticeMusicPlayer.Volume != 0 || !noticeMusicPlayer.IsMuted) throw new InvalidDataException("UI preview music was not safely muted.");
             if (CertificateMusicVolume(false) != 1.0 || CertificateMusicVolume(true) != 0.0) throw new InvalidDataException("Certificate music volume is not max in production or muted in preview tests.");
-            string firstTrackPath = activeNoticeMusicPath;
             for (int trackIndex = 0; trackIndex < noticeMusicResources.Length; trackIndex++)
             {
-                noticeMusicRequested = false;
-                if (noticeMusicPlayer != null) { try { noticeMusicPlayer.Stop(); noticeMusicPlayer.Close(); } catch { } }
-                noticeMusicPlayer = null;
-                DeleteActiveNoticeMusicFile();
-                CleanupNoticeMusicFiles();
                 noticeMusicSmokeOpened = new TaskCompletionSource<bool>();
-                noticeMusicRequested = true;
                 previousNoticeMusicIndex = trackIndex;
                 OpenNoticeMusicTrack(trackIndex);
                 Task trackOpened = await Task.WhenAny(noticeMusicSmokeOpened.Task, Task.Delay(TimeSpan.FromSeconds(8)));
-                if (trackOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result || noticeMusicPlayer == null || noticeMusicPlayer.Volume != 0 || noticeMusicPlayer.IsMuted) throw new InvalidDataException("Embedded 8-bit music track " + (trackIndex + 1) + " failed muted media-open validation.");
+                if (trackOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result || noticeMusicPlayer == null || noticeMusicPlayer.Volume != 0 || !noticeMusicPlayer.IsMuted) throw new InvalidDataException("Embedded PCM music track " + (trackIndex + 1) + " failed muted native audio validation.");
             }
-            noticeMusicSmokeOpened = null;
-            try { noticeMusicPlayer.Stop(); noticeMusicPlayer.Close(); } catch { }
+            noticeMusicPlayer.Dispose();
             noticeMusicPlayer = null;
-            DeleteActiveNoticeMusicFile();
-            CleanupNoticeMusicFiles();
-            if (firstTrackPath != null && File.Exists(firstTrackPath)) throw new InvalidDataException("The first temporary music track remained after the 20-track decode walk.");
-            string musicFolder = Path.GetDirectoryName(firstTrackPath);
-            string naturalEndFixture = Path.Combine(musicFolder, "smoke-natural-ended-" + Guid.NewGuid().ToString("N") + ".wav");
-            WriteNoticeMusicSmokeTrack(naturalEndFixture);
-            activeNoticeMusicPath = naturalEndFixture;
-            noticeMusicTempFiles.Add(naturalEndFixture);
+            activeNoticeMusicResource = "smoke-natural-end";
             noticeMusicSmokeOpened = new TaskCompletionSource<bool>();
             noticeMusicPlayer = CreateNoticeMusicPlayer();
-            noticeMusicPlayer.Open(new Uri(naturalEndFixture, UriKind.Absolute));
+            using (var fixture = CreateNoticeMusicSmokeTrack()) noticeMusicPlayer.Open(fixture);
             Task fixtureOpened = await Task.WhenAny(noticeMusicSmokeOpened.Task, Task.Delay(TimeSpan.FromSeconds(8)));
-            if (fixtureOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result) throw new InvalidDataException("The muted natural-end UI fixture did not open.");
+            if (fixtureOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result) throw new InvalidDataException("The muted natural-end native PCM fixture did not open.");
             noticeMusicSmokeOpened = new TaskCompletionSource<bool>();
             Task nextMusicOpened = await Task.WhenAny(noticeMusicSmokeOpened.Task, Task.Delay(TimeSpan.FromSeconds(8)));
-            if (nextMusicOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result || activeNoticeMusicPath == firstTrackPath || activeNoticeMusicPath == naturalEndFixture || File.Exists(firstTrackPath) || File.Exists(naturalEndFixture) || !File.Exists(activeNoticeMusicPath)) throw new InvalidDataException("The actual MediaEnded event did not open a different embedded track and release the previous temporary files.");
+            if (nextMusicOpened != noticeMusicSmokeOpened.Task || !noticeMusicSmokeOpened.Task.Result || activeNoticeMusicResource == "smoke-natural-end" || noticeMusicPlayer == null) throw new InvalidDataException("The native PCM completion event did not select and open the next embedded track.");
             noticeMusicSmokeOpened = null;
             await Window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
             string certificateScreenshot = Path.Combine(directory, "access-denied-certificate.png");
             SaveVisual(certificate, certificateScreenshot);
             if (!IsFullyOpaqueScreenshot(certificateScreenshot)) throw new InvalidDataException("The certificate screenshot contains transparent pixels that display as black outside the rounded window surface.");
-            string secondTrackPath = activeNoticeMusicPath;
             if (!HandleNoticeCertificateKey(certificate, Key.Escape) || certificate.IsVisible || activeNoticeCertificate != null) throw new InvalidDataException("Escape did not close the certificate window.");
-            if (noticeMusicPlayer != null || activeNoticeMusicPath != null || File.Exists(secondTrackPath)) throw new InvalidDataException("Closing the certificate did not release its music player and temporary track.");
+            if (noticeMusicPlayer != null || activeNoticeMusicResource != null) throw new InvalidDataException("Closing the certificate did not release its native music player and buffer.");
             HandleNoticeBarKey(Key.Enter, false);
             if (activeNoticeCertificate == null || !activeNoticeCertificate.IsVisible) throw new InvalidDataException("Keyboard activation did not open the full certificate.");
             certificateCloseButton = activeNoticeCertificateCloseButton;

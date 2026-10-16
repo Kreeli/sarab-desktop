@@ -8,6 +8,8 @@ English | [简体中文](README.zh-CN.md)
 
 Get **`SarabDesktop-1.1.0-Setup-x64.exe`** from [Releases](https://github.com/Kreeli/sarab-desktop/releases). Setup asks for administrator approval and installs the app in the protected Program Files folder so its driver tools cannot be replaced by a standard-user process. A portable ZIP is also available for standard-user features; it cannot perform administrator actions such as driver installation or location writes.
 
+For one-click portable startup, extract the complete ZIP and double-click **`Start.cmd`**. It checks the supported Windows version, x64 architecture, .NET Framework and package integrity before opening the app. The embedded music plays directly from memory through Windows PCM audio; it needs no downloads, external player or optional media codecs. See [one-click startup and packaging](docs/DEPLOYMENT.md) for supported environments and source builds.
+
 1. Run Setup, choose English or Simplified Chinese, and open the app.
 2. Open **Setup & repair**. It checks Windows architecture, Secure Boot, active test signing, the driver and location permissions.
 3. The original driver is test-signed. If needed, read the [installation guide](docs/INSTALL.md), prepare Windows, restart manually, then return to install the driver. Secure Boot and disk protection need explicit attention; the app never changes firmware, decrypts disks or restarts automatically.

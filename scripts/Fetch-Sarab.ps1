@@ -7,7 +7,7 @@ $complete = Test-Path -LiteralPath $vendor
 foreach ($file in $pins.files.PSObject.Properties) { $path = Join-Path $vendor $file.Name; if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.Value) { $complete = $false } }
 if (-not $complete) {
     New-Item -ItemType Directory -Path (Split-Path $archive -Parent) -Force | Out-Null
-    if (-not (Test-Path -LiteralPath $archive)) { Invoke-WebRequest -Uri $pins.sarabUrl -OutFile $archive }
+    if (-not (Test-Path -LiteralPath $archive)) { Invoke-WebRequest -UseBasicParsing -Uri $pins.sarabUrl -OutFile $archive }
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $pins.archiveSha256) { throw 'Upstream archive SHA256 mismatch. Do not install this package.' }
     $extracted = Join-Path $ProjectRoot ('build\upstream-' + [guid]::NewGuid().ToString('N'))
     Expand-Archive -LiteralPath $archive -DestinationPath $extracted

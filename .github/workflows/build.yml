@@ -21,12 +21,33 @@ jobs:
           New-Item -ItemType Directory -Path build/test-results -Force | Out-Null
           $test = Start-Process -FilePath ./dist/SarabDesktop.exe -ArgumentList '--self-test "build/test-results/self-test.json"' -PassThru -Wait
           if ($test.ExitCode -ne 0) { Get-Content build/test-results/self-test.json; throw 'Self-test failed' }
+      - name: Verify one-click prerequisites and complete distribution
+        shell: pwsh
+        run: |
+          ./tests/Test-Deployment.ps1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/Test-StatePaths.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native state-path rejection tests failed' }
+          ./scripts/Start-SarabDesktop.ps1 -ProjectRoot ./dist -CheckOnly
       - name: Create installer and portable ZIP
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' } }
-          ./scripts/Package.ps1 -Iscc $iscc
+          ./scripts/Package.ps1 -Iscc $iscc -SkipBuild
+      - name: Verify extracted portable package
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath releases/SarabDesktop-1.1.0-Portable-x64.zip -DestinationPath build/portable-test
+          ./build/portable-test/scripts/Start-SarabDesktop.ps1 -CheckOnly
+          $report = Join-Path $env:GITHUB_WORKSPACE 'build/test-results/portable-self-test.json'
+          $test = Start-Process -FilePath ./build/portable-test/SarabDesktop.exe -ArgumentList ('--self-test "' + $report + '"') -WorkingDirectory $env:TEMP -PassThru -Wait
+          if ($test.ExitCode -ne 0) { Get-Content $report -ErrorAction SilentlyContinue; throw 'Extracted portable self-test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SarabDesktop-test-results
+          path: build/test-results/*
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: SarabDesktop-Windows-x64
