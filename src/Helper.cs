@@ -17,6 +17,7 @@ namespace SarabDesktop
             {
                 if (args.Length >= 2 && args[0] == "--language") { L.Set(args[1]); args = args.Skip(2).ToArray(); }
                 if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) throw new InvalidOperationException(L.T("设置位置需要管理员授权。"));
+                Backend.RequireProtectedInstallDirectory();
                 if (args.Length == 1 && args[0] == "--prepare-system") { Installation.PrepareTestSigning(); return 0; }
                 if (args.Length == 1 && args[0] == "--install-driver") { Installation.InstallDriver(); return 0; }
                 if (args.Length == 1 && args[0] == "--remove-driver") { Installation.RemoveDriver(); return 0; }

@@ -6,7 +6,7 @@
 
 ## 1. 安装上位机
 
-运行 `SarabDesktop-1.1.0-Setup-x64.exe`，选择中英文和安装目录。安装程序仅为当前用户安装 GUI、创建开始菜单入口与卸载器，完成后可打开“安装与修复”。它不会静默安装驱动、开启测试模式或开启自启动。便携 ZIP 也包含同样的程序和驱动。
+运行 `SarabDesktop-1.1.0-Setup-x64.exe` 并选择中英文。安装程序会请求管理员确认，将应用为所有用户安装到受保护的 `Program Files\SarabDesktop` 目录，并创建开始菜单入口与卸载器；之后可打开“安装与修复”。它不会静默安装驱动、开启测试模式或开启自启动。便携 ZIP 仅支持普通权限功能；管理员操作必须使用已安装版本。
 
 朋友不需要 SDK、Rust、Node.js、Python 或单独安装 VC++ 运行库。支持 Windows 10 1809+ / Windows 11 的 x64 电脑，不支持 ARM64。新增程序尚无发布者代码签名，Windows 可能显示未知发布者；请仅从本项目 Release 获取并核对 SHA256SUMS。
 
@@ -31,7 +31,7 @@ manage-bde -protectors -disable C: -RebootCount 1
 
 ## 3. 安装原版驱动
 
-点击“安装 / 修复原版驱动”，阅读确认说明。只有 `SarabDesktop.Helper.exe` 请求管理员权限。辅助程序校验固定 CLI、DLL、CAT、INF 和证书后，调用原 Sarab 安装器。
+点击“安装 / 修复原版驱动”，阅读确认说明。只有受保护安装目录中的 `SarabDesktop.Helper.exe` 请求管理员权限。辅助程序校验固定 CLI、DLL、CAT、INF 和证书后，调用原 Sarab 安装器。从便携目录或用户可写目录启动时，程序会阻止管理员操作。
 
 此操作将测试证书（指纹 `40BDA793F3AE6F6A12022D05497D43D9154793EE`）导入 LocalMachine 的 **Root** 与 **TrustedPublisher**，并注册 `Root\SarabGnss`。安装后核对硬件标识和 ProblemCode=0，不把控制台成功文字当作安装证明。日志及启动备份在 `%PROGRAMDATA%\SarabDesktop\Setup`。
 
