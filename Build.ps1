@@ -16,6 +16,7 @@ if (-not $Compiler) { $Compiler = Join-Path $VisualStudio 'MSBuild\Current\Bin\R
 if (-not (Test-Path -LiteralPath $Compiler)) { throw 'Roslyn C# compiler not found.' }
 $vendor = & (Join-Path $projectRoot 'scripts\Fetch-Sarab.ps1') -ProjectRoot $projectRoot
 $vcRuntime = & (Join-Path $projectRoot 'scripts\Fetch-VcRuntime.ps1') -ProjectRoot $projectRoot -VisualStudio $VisualStudio
+$runtimeHash = (Get-FileHash -LiteralPath $vcRuntime.AppLocalRuntime -Algorithm SHA256).Hash
 if (-not $ProbeBinary) { $ProbeBinary = & (Join-Path $projectRoot 'scripts\Build-Probe.ps1') -ProjectRoot $projectRoot -VisualStudio $VisualStudio }
 $buildRoot = Join-Path $projectRoot 'build'
 $generatedRoot = Join-Path $buildRoot 'generated'
@@ -30,7 +31,7 @@ New-Item -ItemType Directory -Path (Join-Path $outputRoot 'runtime') -Force | Ou
 $probeHash = (Get-FileHash -LiteralPath $ProbeBinary -Algorithm SHA256).Hash
 $generatedHelper = Join-Path $generatedRoot 'HelperBuildTimePins.cs'
 $generatedMain = Join-Path $generatedRoot 'MainBuildTimePins.cs'
-[System.IO.File]::WriteAllText($generatedHelper, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string HelperHash = ""; } }'))
+[System.IO.File]::WriteAllText($generatedHelper, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string RuntimeHash = "' + $runtimeHash + '"; public const string HelperHash = ""; } }'))
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $referenceNames = @('System.dll','System.Core.dll','System.Xaml.dll','System.Xml.dll','System.Web.dll','System.Web.Extensions.dll','System.Security.dll','System.Management.dll','System.Net.Http.dll','System.Drawing.dll','System.Windows.Forms.dll','WPF\PresentationCore.dll','WPF\PresentationFramework.dll','WPF\WindowsBase.dll')
 $references = @($referenceNames | ForEach-Object { '/reference:' + (Join-Path $framework $_) })
@@ -50,7 +51,7 @@ $helperSources = @('Core.cs','Services.cs','Installation.cs','Localization.cs','
 & $Compiler @common ('/out:' + (Join-Path $outputRoot 'SarabDesktop.Helper.exe')) ('/win32manifest:' + (Join-Path $projectRoot 'src\helper.manifest')) @helperSources $generatedHelper
 if ($LASTEXITCODE -ne 0) { throw 'Administrator helper build failed.' }
 $helperHash = (Get-FileHash -LiteralPath (Join-Path $outputRoot 'SarabDesktop.Helper.exe') -Algorithm SHA256).Hash
-[System.IO.File]::WriteAllText($generatedMain, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string HelperHash = "' + $helperHash + '"; } }'))
+[System.IO.File]::WriteAllText($generatedMain, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string RuntimeHash = "' + $runtimeHash + '"; public const string HelperHash = "' + $helperHash + '"; } }'))
 & $Compiler @common $musicResources $certificateBackgroundResource ('/out:' + (Join-Path $outputRoot 'SarabDesktop.exe')) ('/win32manifest:' + (Join-Path $projectRoot 'src\app.manifest')) ('/resource:' + (Join-Path $projectRoot 'src\MainWindow.xaml') + ',SarabDesktop.MainWindow.xaml') @mainSources (Join-Path $projectRoot 'src\Appearance.cs') $generatedMain (Join-Path $projectRoot 'tests\SelfTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
 Copy-Item -LiteralPath $iconPath -Destination (Join-Path $outputRoot 'assets\sarab.ico') -Force

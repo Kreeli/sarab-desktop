@@ -25,10 +25,13 @@ namespace SarabDesktop
         public const string SarabHash = "8D8614A9B44658D2A1C4440E829078B6FE61C9E8AB735D53AEDFEAE33E2AA0E4";
         public const string ProbeHash = BuildTimePins.ProbeHash;
         public const string HelperHash = BuildTimePins.HelperHash;
+        public const string RuntimeHash = BuildTimePins.RuntimeHash;
         public static string BaseDirectory => AppDomain.CurrentDomain.BaseDirectory;
         public static string SarabPath => Path.Combine(BaseDirectory, "backend", "sarab.exe");
         public static string ProbePath => Path.Combine(BaseDirectory, "backend", "location-probe.exe");
         public static string HelperPath => Path.Combine(BaseDirectory, "SarabDesktop.Helper.exe");
+        public static string RuntimePath => Path.Combine(BaseDirectory, "backend", "vcruntime140.dll");
+        public static void VerifyCliRuntime() => VerifyFile(RuntimePath, RuntimeHash);
         public static bool IsProtectedInstallDirectory(string baseDirectory, string programFilesDirectory)
         {
             try
@@ -47,7 +50,7 @@ namespace SarabDesktop
             string[] directories = { BaseDirectory, Path.Combine(BaseDirectory, "backend"), Path.Combine(BaseDirectory, "driver") };
             foreach (string directory in directories)
                 if (!Directory.Exists(directory) || IsReparsePoint(directory)) throw new InvalidOperationException(L.T("管理员操作只能从 Program Files 下安装版本执行。请运行安装程序；便携版仅支持普通操作。"));
-            foreach (string file in new[] { HelperPath, SarabPath, ProbePath, Path.Combine(Installation.DriverDirectory, "SarabGnss.dll"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cat"), Path.Combine(Installation.DriverDirectory, "SarabGnss.inf"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cer") })
+            foreach (string file in new[] { HelperPath, SarabPath, ProbePath, RuntimePath, Path.Combine(Installation.DriverDirectory, "SarabGnss.dll"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cat"), Path.Combine(Installation.DriverDirectory, "SarabGnss.inf"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cer") })
                 if (File.Exists(file) && IsReparsePoint(file)) throw new InvalidOperationException(L.T("管理员操作只能从 Program Files 下安装版本执行。请运行安装程序；便携版仅支持普通操作。"));
         }
         static bool IsReparsePoint(string path)

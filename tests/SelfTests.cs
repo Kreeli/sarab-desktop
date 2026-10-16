@@ -272,7 +272,22 @@ namespace SarabDesktop
                 catch (Exception ex) { if (ex is UnauthorizedAccessException || ex is System.Security.SecurityException) throw new TestSkippedException("运行环境拒绝 HKCU Run 写入；正式启动项未修改。"); throw; }
                 Assert(StartupRegistration.Enabled == before, "正式启动项被修改");
             });
-            Test("后端与提权辅助程序 SHA256", () => { Backend.VerifyFile(Backend.SarabPath, Backend.SarabHash); Backend.VerifyFile(Backend.ProbePath, Backend.ProbeHash); Backend.VerifyFile(Backend.HelperPath, Backend.HelperHash); });
+            Test("后端、提权助手与内置运行库 SHA256", () =>
+            {
+                Backend.VerifyFile(Backend.SarabPath, Backend.SarabHash); Backend.VerifyFile(Backend.ProbePath, Backend.ProbeHash); Backend.VerifyFile(Backend.HelperPath, Backend.HelperHash);
+                Backend.VerifyCliRuntime();
+                string directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(report)), "pinned-runtime");
+                Directory.CreateDirectory(directory);
+                string changed = Path.Combine(directory, "changed.dll");
+                File.Copy(Backend.RuntimePath, changed, true);
+                using (var file = new FileStream(changed, FileMode.Open, FileAccess.ReadWrite)) { int first = file.ReadByte(); file.Position = 0; file.WriteByte((byte)(first ^ 255)); }
+                bool rejected = false;
+                try { Backend.VerifyFile(changed, Backend.RuntimeHash); } catch (InvalidDataException) { rejected = true; }
+                Assert(rejected, "被修改的运行库通过哈希验证");
+                rejected = false;
+                try { Backend.VerifyFile(Path.Combine(directory, "missing-" + Guid.NewGuid().ToString("N") + ".dll"), Backend.RuntimeHash); } catch (FileNotFoundException) { rejected = true; }
+                Assert(rejected, "缺少运行库时未拒绝，可能回退到用户PATH");
+            });
             Test("固定驱动包和证书校验", Installation.VerifyDriverPackage);
             Test("四语资源完整与系统语言映射", () =>
             {
