@@ -25,10 +25,13 @@ namespace SarabDesktop
         public const string SarabHash = "8D8614A9B44658D2A1C4440E829078B6FE61C9E8AB735D53AEDFEAE33E2AA0E4";
         public const string ProbeHash = BuildTimePins.ProbeHash;
         public const string HelperHash = BuildTimePins.HelperHash;
+        public const string RuntimeHash = BuildTimePins.RuntimeHash;
         public static string BaseDirectory => AppDomain.CurrentDomain.BaseDirectory;
         public static string SarabPath => Path.Combine(BaseDirectory, "backend", "sarab.exe");
         public static string ProbePath => Path.Combine(BaseDirectory, "backend", "location-probe.exe");
         public static string HelperPath => Path.Combine(BaseDirectory, "SarabDesktop.Helper.exe");
+        public static string RuntimePath => Path.Combine(BaseDirectory, "backend", "vcruntime140.dll");
+        public static void VerifyCliRuntime() => VerifyFile(RuntimePath, RuntimeHash);
         public static bool IsProtectedInstallDirectory(string baseDirectory, string programFilesDirectory)
         {
             try
@@ -47,7 +50,7 @@ namespace SarabDesktop
             string[] directories = { BaseDirectory, Path.Combine(BaseDirectory, "backend"), Path.Combine(BaseDirectory, "driver") };
             foreach (string directory in directories)
                 if (!Directory.Exists(directory) || IsReparsePoint(directory)) throw new InvalidOperationException(L.T("管理员操作只能从 Program Files 下安装版本执行。请运行安装程序；便携版仅支持普通操作。"));
-            foreach (string file in new[] { HelperPath, SarabPath, ProbePath, Path.Combine(Installation.DriverDirectory, "SarabGnss.dll"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cat"), Path.Combine(Installation.DriverDirectory, "SarabGnss.inf"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cer") })
+            foreach (string file in new[] { HelperPath, SarabPath, ProbePath, RuntimePath, Path.Combine(Installation.DriverDirectory, "SarabGnss.dll"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cat"), Path.Combine(Installation.DriverDirectory, "SarabGnss.inf"), Path.Combine(Installation.DriverDirectory, "SarabGnss.cer") })
                 if (File.Exists(file) && IsReparsePoint(file)) throw new InvalidOperationException(L.T("管理员操作只能从 Program Files 下安装版本执行。请运行安装程序；便携版仅支持普通操作。"));
         }
         static bool IsReparsePoint(string path)
@@ -211,6 +214,7 @@ namespace SarabDesktop
     {
         const int MaxGeocodingResponseBytes = 1024 * 1024;
         readonly HttpClient client;
+        readonly TimeSpan requestTimeout;
         readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         long lastOsmRequestTimestamp;
         bool hasOsmRequestTimestamp;
@@ -218,8 +222,11 @@ namespace SarabDesktop
         volatile string requestLanguage;
         volatile bool disposed;
         public GeocodingService() : this(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate }) { }
-        internal GeocodingService(HttpMessageHandler handler)
+        internal GeocodingService(HttpMessageHandler handler) : this(handler, TimeSpan.FromSeconds(18)) { }
+        internal GeocodingService(HttpMessageHandler handler, TimeSpan requestTimeout)
         {
+            if (requestTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(requestTimeout));
+            this.requestTimeout = requestTimeout;
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             client = new HttpClient(handler ?? throw new ArgumentNullException(nameof(handler))) { Timeout = TimeSpan.FromSeconds(18) };
             client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SarabDesktop/1.0 (Windows; manual address lookup)");
@@ -320,19 +327,19 @@ namespace SarabDesktop
         }
         async Task<string> GetAsync(string url, string language)
         {
-            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(18)))
+            using (var timeout = new CancellationTokenSource(requestTimeout))
             using (var request = new HttpRequestMessage(HttpMethod.Get, url))
             {
                 request.Headers.TryAddWithoutValidation("Accept-Language", AcceptLanguageFor(language));
                 using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
                 {
                     if (!response.IsSuccessStatusCode) throw new InvalidOperationException(L.T("地址服务返回 HTTP ") + (int)response.StatusCode + L.T("，请稍后重试。"));
-                    using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                    using (var stream = await AwaitBodyAsync(response.Content.ReadAsStreamAsync(), timeout.Token).ConfigureAwait(false))
                     using (var buffer = new MemoryStream())
                     {
                         var chunk = new byte[8192];
                         int count;
-                        while ((count = await stream.ReadAsync(chunk, 0, chunk.Length, timeout.Token).ConfigureAwait(false)) > 0)
+                        while ((count = await AwaitBodyAsync(stream.ReadAsync(chunk, 0, chunk.Length, timeout.Token), timeout.Token).ConfigureAwait(false)) > 0)
                         {
                             if (buffer.Length + count > MaxGeocodingResponseBytes) throw new InvalidDataException(L.T("地址服务返回的数据过大，已停止读取。"));
                             buffer.Write(chunk, 0, count);
@@ -343,6 +350,21 @@ namespace SarabDesktop
                         catch (DecoderFallbackException) { throw new InvalidDataException(L.T("地址服务返回的数据格式无效，请稍后重试。")); }
                     }
                 }
+            }
+        }
+        static async Task<T> AwaitBodyAsync<T>(Task<T> operation, CancellationToken cancellationToken)
+        {
+            var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (cancellationToken.Register(() => cancelled.TrySetResult(true)))
+            {
+                if (await Task.WhenAny(operation, cancelled.Task).ConfigureAwait(false) != operation)
+                {
+                    // Older Framework streams can ignore cancellation. Return at the deadline;
+                    // the enclosing using statements close the response and its stream.
+                    _ = operation.ContinueWith(task => { var ignored = task.Exception; }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    throw new TaskCanceledException();
+                }
+                return await operation.ConfigureAwait(false);
             }
         }
         static object DeserializeJson(string json)

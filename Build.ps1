@@ -1,16 +1,22 @@
 param([string]$Compiler, [string]$VisualStudio, [string]$ProbeBinary)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Sarab Desktop requires Windows 10 1809+ x64 or Windows 11 x64.' }
+& (Join-Path $projectRoot 'scripts\Test-InstallerPolicy.ps1') -ProjectRoot $projectRoot
 & (Join-Path $projectRoot 'scripts\Test-Localization.ps1') -ProjectRoot $projectRoot
 & (Join-Path $projectRoot 'scripts\Build-Help.ps1') -ProjectRoot $projectRoot
 if (-not $VisualStudio) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Install Visual Studio Build Tools with the C++ workload.' }
-    $VisualStudio = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -property installationPath
+    $requiredComponent = if ($ProbeBinary) { 'Microsoft.Component.MSBuild' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+    $VisualStudio = & $vswhere -latest -products '*' -requires $requiredComponent -property installationPath
+    if (-not $VisualStudio) { throw 'Visual Studio Build Tools with C++ tools and a Windows SDK was not found. Install the Desktop development with C++ workload.' }
 }
 if (-not $Compiler) { $Compiler = Join-Path $VisualStudio 'MSBuild\Current\Bin\Roslyn\csc.exe' }
 if (-not (Test-Path -LiteralPath $Compiler)) { throw 'Roslyn C# compiler not found.' }
 $vendor = & (Join-Path $projectRoot 'scripts\Fetch-Sarab.ps1') -ProjectRoot $projectRoot
+$vcRuntime = & (Join-Path $projectRoot 'scripts\Fetch-VcRuntime.ps1') -ProjectRoot $projectRoot -VisualStudio $VisualStudio
+$runtimeHash = (Get-FileHash -LiteralPath $vcRuntime.AppLocalRuntime -Algorithm SHA256).Hash
 if (-not $ProbeBinary) { $ProbeBinary = & (Join-Path $projectRoot 'scripts\Build-Probe.ps1') -ProjectRoot $projectRoot -VisualStudio $VisualStudio }
 $buildRoot = Join-Path $projectRoot 'build'
 $generatedRoot = Join-Path $buildRoot 'generated'
@@ -20,10 +26,12 @@ if (Test-Path -LiteralPath $outputRoot) {
     Move-Item -LiteralPath $outputRoot -Destination $preserved
 }
 foreach ($dir in @($outputRoot, (Join-Path $outputRoot 'assets'), (Join-Path $outputRoot 'backend'), (Join-Path $outputRoot 'driver'), (Join-Path $outputRoot 'docs'), $generatedRoot)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+New-Item -ItemType Directory -Path (Join-Path $outputRoot 'scripts') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $outputRoot 'runtime') -Force | Out-Null
 $probeHash = (Get-FileHash -LiteralPath $ProbeBinary -Algorithm SHA256).Hash
 $generatedHelper = Join-Path $generatedRoot 'HelperBuildTimePins.cs'
 $generatedMain = Join-Path $generatedRoot 'MainBuildTimePins.cs'
-[System.IO.File]::WriteAllText($generatedHelper, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string HelperHash = ""; } }'))
+[System.IO.File]::WriteAllText($generatedHelper, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string RuntimeHash = "' + $runtimeHash + '"; public const string HelperHash = ""; } }'))
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $referenceNames = @('System.dll','System.Core.dll','System.Xaml.dll','System.Xml.dll','System.Web.dll','System.Web.Extensions.dll','System.Security.dll','System.Management.dll','System.Net.Http.dll','System.Drawing.dll','System.Windows.Forms.dll','WPF\PresentationCore.dll','WPF\PresentationFramework.dll','WPF\WindowsBase.dll')
 $references = @($referenceNames | ForEach-Object { '/reference:' + (Join-Path $framework $_) })
@@ -38,17 +46,21 @@ $expectedMusicNames = @(1..20 | ForEach-Object { 'track-' + $_.ToString('D2', [G
 if ((@($musicFiles.Name) -join '|') -cne ($expectedMusicNames -join '|')) { throw 'Embedded notice music filenames must be track-01.wav through track-20.wav.' }
 $musicResources = @($musicFiles | ForEach-Object { '/resource:' + $_.FullName + ',SarabDesktop.NoticeMusic.' + [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
 $common = @('/nologo','/target:winexe','/platform:x64','/langversion:latest','/optimize+','/utf8output','/deterministic+',('/win32icon:' + $iconPath),('/resource:' + (Join-Path $projectRoot 'locales\en-US.json') + ',SarabDesktop.en.json'),('/resource:' + (Join-Path $projectRoot 'locales\ja-JP.json') + ',SarabDesktop.ja.json'),('/resource:' + (Join-Path $projectRoot 'locales\zh-TW.json') + ',SarabDesktop.zh-TW.json')) + $references
-$mainSources = @('Core.cs','Services.cs','Installation.cs','Localization.cs','DesktopController.cs','Program.cs','AssemblyInfo.cs') | ForEach-Object { Join-Path $projectRoot "src\$_" }
+$mainSources = @('Core.cs','Services.cs','Installation.cs','Localization.cs','DesktopController.cs','EmbeddedPcmPlayer.cs','Program.cs','AssemblyInfo.cs') | ForEach-Object { Join-Path $projectRoot "src\$_" }
 $helperSources = @('Core.cs','Services.cs','Installation.cs','Localization.cs','Helper.cs','AssemblyInfo.cs') | ForEach-Object { Join-Path $projectRoot "src\$_" }
 & $Compiler @common ('/out:' + (Join-Path $outputRoot 'SarabDesktop.Helper.exe')) ('/win32manifest:' + (Join-Path $projectRoot 'src\helper.manifest')) @helperSources $generatedHelper
 if ($LASTEXITCODE -ne 0) { throw 'Administrator helper build failed.' }
 $helperHash = (Get-FileHash -LiteralPath (Join-Path $outputRoot 'SarabDesktop.Helper.exe') -Algorithm SHA256).Hash
-[System.IO.File]::WriteAllText($generatedMain, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string HelperHash = "' + $helperHash + '"; } }'))
+[System.IO.File]::WriteAllText($generatedMain, ('namespace SarabDesktop { public static class BuildTimePins { public const string ProbeHash = "' + $probeHash + '"; public const string RuntimeHash = "' + $runtimeHash + '"; public const string HelperHash = "' + $helperHash + '"; } }'))
 & $Compiler @common $musicResources $certificateBackgroundResource ('/out:' + (Join-Path $outputRoot 'SarabDesktop.exe')) ('/win32manifest:' + (Join-Path $projectRoot 'src\app.manifest')) ('/resource:' + (Join-Path $projectRoot 'src\MainWindow.xaml') + ',SarabDesktop.MainWindow.xaml') @mainSources (Join-Path $projectRoot 'src\Appearance.cs') $generatedMain (Join-Path $projectRoot 'tests\SelfTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
 Copy-Item -LiteralPath $iconPath -Destination (Join-Path $outputRoot 'assets\sarab.ico') -Force
 Copy-Item -LiteralPath (Join-Path $vendor 'sarab.exe') -Destination (Join-Path $outputRoot 'backend\sarab.exe') -Force
+Copy-Item -LiteralPath $vcRuntime.AppLocalRuntime -Destination (Join-Path $outputRoot 'backend\vcruntime140.dll') -Force
+Copy-Item -LiteralPath $vcRuntime.Redistributable -Destination (Join-Path $outputRoot 'runtime\VC_redist.x64.exe') -Force
 Copy-Item -LiteralPath $ProbeBinary -Destination (Join-Path $outputRoot 'backend\location-probe.exe') -Force
+foreach ($name in @('Start-SarabDesktop.ps1','Test-Distribution.ps1')) { Copy-Item -LiteralPath (Join-Path $projectRoot ('scripts\' + $name)) -Destination (Join-Path $outputRoot 'scripts') -Force }
+Copy-Item -LiteralPath (Join-Path $projectRoot 'Start.cmd') -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $vendor 'LICENSE') -Destination (Join-Path $outputRoot 'backend\Sarab-LICENSE.txt') -Force
 foreach ($name in @('SarabGnss.dll','SarabGnss.cat','SarabGnss.inf','SarabGnss.cer')) { Copy-Item -LiteralPath (Join-Path $vendor $name) -Destination (Join-Path $outputRoot 'driver') -Force }
 foreach ($name in @('README.md','README.zh-CN.md','LICENSE','NOTICE','CREDITS.md','CREDITS.html','THIRD-PARTY-NOTICES.md')) { $file = Join-Path $projectRoot $name; if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination $outputRoot -Force } }

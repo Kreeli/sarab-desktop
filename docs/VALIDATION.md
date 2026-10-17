@@ -1,5 +1,25 @@
 # Validation / 验证范围
 
+## PR #1 additional audit · 2026-10-16
+
+The follow-up audit on Windows x64 validated the following changes without installing/removing a driver or modifying boot settings:
+
+- Desktop/helper/native-reader build; 327 source strings and 334 entries in each embedded translation dictionary.
+- 41 self-test cases: all passed in the normal user context. In the restricted sandbox, 40 passed and the temporary HKCU Run write test was skipped because the host denied access. Includes malicious ACLs, raw generic-access ACEs, bounded UTF-8 configuration reads/writes, large log tails, malformed network bodies and a stream that ignores cancellation. Atomic settings replacement was reproduced failing without metadata-merge compatibility and passed after the fix.
+- UI smoke tests in zh-CN, zh-TW, ja-JP and en-US passed, including all 20 embedded tracks opened through native waveOut in muted preview, actual end-of-buffer random advancement, teardown, sidebar resizing, locale changes, high contrast and certificate screenshots.
+- Distribution integrity tests cover a valid fixture plus seven rejection cases: changed executable, omitted executable, path traversal, duplicate path, canonical path alias, malformed manifest and missing driver catalog.
+- Native state-path checks reject actual NTFS directory junctions and multiply linked files through the production handle-based validator; fixtures stay in build/ and do not touch ProgramData.
+- PE dependency inspection found that upstream CLI and driver require VCRUNTIME140. Packages now include a Microsoft-signed app-local CLI runtime and a hash/version/signature-verified offline x64 runtime installer. Full Setup prepares the driver runtime without scheduling a restart; the runtime installer itself was not executed during this follow-up.
+- The app-local CLI runtime hash is embedded at build time and checked before any elevated helper operation; missing or changed files fail closed instead of falling back to an inherited PATH. The runtime also participates in the protected-install reparse check and regression tests.
+- A live Nominatim search passed in the normal user context. The restricted test sandbox could not acquire Windows TLS credentials; this environment failure was independently reproduced with a standard HTTPS request, without disabling certificate verification.
+- One-click prerequisites and hash validation work in Windows PowerShell 5.1 and PowerShell 7; portable packages are tested after extraction to a directory containing Chinese characters and spaces, with the application run outside its source tree.
+
+The audio path uses only embedded PCM and the Windows waveform API; it does not need a temporary audio directory, external player, network download or optional media decoder. Muted playback checks device initialization and completion, not audible loudspeaker output. A missing audio device stops music without preventing normal app use.
+
+**Limits of this follow-up:** no real GNSS/driver success was established (`hardwareVerified=false`). First-time driver setup, BCD changes, UAC, reboot, upgrade/uninstall and every supported Windows version require separate physical/VM validation. The local host has no Inno Setup compiler; the PR's Windows CI builds the installer and checks the extracted portable package. The older validation record below is historical and is not evidence of new hardware validation.
+
+本轮已复测自测、四语 UI、内置原生 PCM、部署完整性和离开源码目录的便携运行。驱动与实际硬件未重新验证；“一键启动”限定于文档列出的 Windows x64 环境，并不自动绕过签名、Secure Boot 或组织策略。
+
 ## 1.1.0 · 2026-10-16
 
 Validated on an x64 Windows 11 machine with an already installed and functioning Sarab v1.0.0 driver.

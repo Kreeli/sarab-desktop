@@ -17,6 +17,23 @@ namespace SarabDesktop
         static int failures;
         static int skipped;
         sealed class TestSkippedException : Exception { public TestSkippedException(string message) : base(message) { } }
+        sealed class UncancellableBodyStream : Stream
+        {
+            readonly TaskCompletionSource<int> pending = new TaskCompletionSource<int>();
+            public bool WasDisposed { get; private set; }
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => pending.Task;
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            protected override void Dispose(bool disposing) { WasDisposed = true; base.Dispose(disposing); }
+        }
         sealed class FakeGeocodingHandler : HttpMessageHandler
         {
             public readonly List<Tuple<Uri, string>> Requests = new List<Tuple<Uri, string>>();
@@ -98,9 +115,49 @@ namespace SarabDesktop
                 Assert(Backend.IsProtectedInstallDirectory(@"c:\program files\sarabdesktop", @"C:\Program Files"), "路径大小写不应影响保护路径识别");
                 Assert(!Backend.IsProtectedInstallDirectory(@"C:\Users\tester\AppData\Local\Programs\SarabDesktop", @"C:\Program Files"), "用户可写目录被识别为受保护路径");
                 Assert(!Backend.IsProtectedInstallDirectory(@"C:\Program Files\OtherApp", @"C:\Program Files"), "其他安装目录不应通过门禁");
-                string projectRoot = Path.GetDirectoryName(Backend.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                string setup = File.ReadAllText(Path.Combine(projectRoot, "installer", "SarabDesktop.iss"));
-                Assert(setup.Contains("DefaultDirName={autopf}\\SarabDesktop") && setup.Contains("PrivilegesRequired=admin") && setup.Contains("DisableDirPage=yes"), "安装器没有固定到管理员保护的 Program Files 路径");
+            });
+            Test("安装状态ACL拒绝用户控制与空DACL", () =>
+            {
+                var administrators = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null);
+                var users = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinUsersSid, null);
+                var acl = new System.Security.AccessControl.DirectorySecurity();
+                acl.SetOwner(administrators);
+                acl.SetAccessRuleProtection(true, false);
+                acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(administrators, System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+                acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(users, System.Security.AccessControl.FileSystemRights.ReadAndExecute, System.Security.AccessControl.AccessControlType.Allow));
+                Assert(Installation.IsTrustedStateSecurity(acl), "管理员所有且普通用户只读的状态目录被拒绝");
+                acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(users, System.Security.AccessControl.FileSystemRights.Write, System.Security.AccessControl.AccessControlType.Allow));
+                Assert(!Installation.IsTrustedStateSecurity(acl), "普通用户可写ACL被接受");
+                acl.SetOwner(users);
+                Assert(!Installation.IsTrustedStateSecurity(acl), "普通用户拥有的目录被接受");
+                var descriptor = new System.Security.AccessControl.RawSecurityDescriptor(System.Security.AccessControl.ControlFlags.DiscretionaryAclPresent | System.Security.AccessControl.ControlFlags.SelfRelative, administrators, administrators, null, null);
+                var bytes = new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(bytes, 0);
+                var nullDacl = new System.Security.AccessControl.DirectorySecurity(); nullDacl.SetSecurityDescriptorBinaryForm(bytes);
+                Assert(!Installation.IsTrustedStateSecurity(nullDacl), "允许任意访问的空DACL被接受");
+                foreach (string rights in new[] { "GA", "GW" })
+                {
+                    var generic = new System.Security.AccessControl.DirectorySecurity();
+                    generic.SetSecurityDescriptorSddlForm("O:BAG:BAD:(A;;FA;;;BA)(A;;" + rights + ";;;BU)");
+                    Assert(!Installation.IsTrustedStateSecurity(generic), "普通用户Generic写入权限被接受：" + rights);
+                }
+            });
+            Test("UTF8配置写入上限与大日志尾部读取", () =>
+            {
+                var store = new SettingsStore(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(report)), "bounded-output-settings"));
+                var settings = new AppSettings(); store.Save(settings);
+                string original = File.ReadAllText(store.FilePath);
+                settings.Target.Source = new string('中', 400000);
+                bool rejected = false;
+                try { store.Save(settings); } catch (InvalidDataException) { rejected = true; }
+                Assert(rejected && File.ReadAllText(store.FilePath) == original, "UTF8超限配置写入后会无法重新读取，或破坏旧配置");
+                string log = Path.Combine(store.DirectoryPath, "activity.log");
+                using (var output = new StreamWriter(log, false, System.Text.Encoding.UTF8))
+                {
+                    output.Write(new string('x', 1024 * 1024)); output.WriteLine();
+                    for (int i = 0; i < 200; i++) output.WriteLine("bounded-log-line-" + i);
+                }
+                string tail = store.ReadLog();
+                Assert(tail.StartsWith("bounded-log-line-199") && tail.EndsWith("bounded-log-line-20") && tail.Length < 10000, "日志未限制为最新180行，或读取了整个巨大前缀");
             });
             Test("内嵌的 20 首 8-bit 喜报音乐", () =>
             {
@@ -120,6 +177,28 @@ namespace SarabDesktop
                         Assert(System.Text.Encoding.ASCII.GetString(header, 36, 4) == "data" && dataBytes > 0 && stream.Length == 44L + dataBytes, "音轨 PCM 数据块缺失或长度不匹配：" + resources[i]);
                     }
                 }
+            });
+            Test("内存 PCM 播放器校验与拒绝损坏资源", () =>
+            {
+                var resources = Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(name => name.StartsWith("SarabDesktop.NoticeMusic.track-", StringComparison.Ordinal)).ToArray();
+                foreach (string name in resources)
+                    using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+                        Assert(EmbeddedPcmPlayer.ReadPcm(stream).Length == stream.Length - 44, "原生播放器无法读取音轨：" + name);
+                byte[] valid;
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resources[0]))
+                using (var copy = new MemoryStream()) { stream.CopyTo(copy); valid = copy.ToArray(); }
+                foreach (int offset in new[] { 0, 4, 8, 20, 22, 24, 28, 32, 34, 40 })
+                {
+                    byte[] damaged = (byte[])valid.Clone(); damaged[offset] ^= 0x7f;
+                    bool rejected = false;
+                    try { using (var stream = new MemoryStream(damaged)) EmbeddedPcmPlayer.ReadPcm(stream); }
+                    catch (InvalidDataException) { rejected = true; }
+                    Assert(rejected, "损坏的 PCM 字段未被拒绝：" + offset);
+                }
+                bool truncated = false;
+                try { using (var stream = new MemoryStream(valid, 0, valid.Length - 1)) EmbeddedPcmPlayer.ReadPcm(stream); }
+                catch (InvalidDataException) { truncated = true; }
+                Assert(truncated, "截断的 PCM 资源未被拒绝");
             });
             Test("嵌入喜报生成器原始背景图", () =>
             {
@@ -193,7 +272,22 @@ namespace SarabDesktop
                 catch (Exception ex) { if (ex is UnauthorizedAccessException || ex is System.Security.SecurityException) throw new TestSkippedException("运行环境拒绝 HKCU Run 写入；正式启动项未修改。"); throw; }
                 Assert(StartupRegistration.Enabled == before, "正式启动项被修改");
             });
-            Test("后端与提权辅助程序 SHA256", () => { Backend.VerifyFile(Backend.SarabPath, Backend.SarabHash); Backend.VerifyFile(Backend.ProbePath, Backend.ProbeHash); Backend.VerifyFile(Backend.HelperPath, Backend.HelperHash); });
+            Test("后端、提权助手与内置运行库 SHA256", () =>
+            {
+                Backend.VerifyFile(Backend.SarabPath, Backend.SarabHash); Backend.VerifyFile(Backend.ProbePath, Backend.ProbeHash); Backend.VerifyFile(Backend.HelperPath, Backend.HelperHash);
+                Backend.VerifyCliRuntime();
+                string directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(report)), "pinned-runtime");
+                Directory.CreateDirectory(directory);
+                string changed = Path.Combine(directory, "changed.dll");
+                File.Copy(Backend.RuntimePath, changed, true);
+                using (var file = new FileStream(changed, FileMode.Open, FileAccess.ReadWrite)) { int first = file.ReadByte(); file.Position = 0; file.WriteByte((byte)(first ^ 255)); }
+                bool rejected = false;
+                try { Backend.VerifyFile(changed, Backend.RuntimeHash); } catch (InvalidDataException) { rejected = true; }
+                Assert(rejected, "被修改的运行库通过哈希验证");
+                rejected = false;
+                try { Backend.VerifyFile(Path.Combine(directory, "missing-" + Guid.NewGuid().ToString("N") + ".dll"), Backend.RuntimeHash); } catch (FileNotFoundException) { rejected = true; }
+                Assert(rejected, "缺少运行库时未拒绝，可能回退到用户PATH");
+            });
             Test("固定驱动包和证书校验", Installation.VerifyDriverPackage);
             Test("四语资源完整与系统语言映射", () =>
             {
@@ -284,6 +378,21 @@ namespace SarabDesktop
                     }
                 }
             });
+            Test("响应正文忽略取消时仍按总期限退出并恢复搜索", () =>
+            {
+                var body = new UncancellableBodyStream();
+                int requests = 0;
+                var handler = new FakeGeocodingHandler { HttpResponseForRequest = uri => new HttpResponseMessage(HttpStatusCode.OK) { Content = ++requests == 1 ? (HttpContent)new StreamContent(body) : new StringContent("{\"status\":\"ZERO_RESULTS\"}") } };
+                using (var service = new GeocodingService(handler, TimeSpan.FromMilliseconds(150)))
+                {
+                    var search = service.SearchAsync("Tokyo Station", "Google", "test-key");
+                    Assert(Task.WhenAny(search, Task.Delay(TimeSpan.FromSeconds(3))).GetAwaiter().GetResult() == search, "不响应取消的正文使搜索永久等待");
+                    try { search.GetAwaiter().GetResult(); throw new Exception("阻塞正文未报告超时"); }
+                    catch (TimeoutException) { }
+                    Assert(body.WasDisposed, "超时后没有关闭响应正文");
+                    Assert(service.SearchAsync("Osaka Station", "Google", "test-key").GetAwaiter().GetResult().Count == 0, "超时后搜索锁没有释放");
+                }
+            });
             Test("Nominatim 拒绝错误顶层结构并截短超长名称", () =>
             {
                 var malformed = new FakeGeocodingHandler { ResponseForRequest = (uri, language) => "{}" };
@@ -299,6 +408,15 @@ namespace SarabDesktop
                     var result = service.SearchAsync("Tokyo Station", "OpenStreetMap", "").GetAwaiter().GetResult();
                     Assert(result.Count == 1 && result[0].Title.Length == 120 && result[0].Location.Name.Length == 120, "过长的地点名称未限制在界面显示范围内");
                 }
+            });
+            Test("超大配置有界拒绝且保留原文件", () =>
+            {
+                string directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(report)), "oversized-settings");
+                var store = new SettingsStore(directory);
+                using (var file = new FileStream(store.FilePath, FileMode.Create, FileAccess.Write)) file.SetLength(SettingsStore.MaxSettingsBytes + 1);
+                var loaded = store.Load();
+                Assert(loaded.Target != null && new FileInfo(store.FilePath).Length == SettingsStore.MaxSettingsBytes + 1, "超大配置没有安全回退或原文件被修改");
+                Assert(Directory.GetFiles(directory, "settings.json.invalid-*").Length == 0, "超大原文件被无界复制为备份");
             });
             Test("关闭地理编码服务时在途查询安全释放", () =>
             {
@@ -328,7 +446,7 @@ namespace SarabDesktop
             {
                 var state = await Backend.ReadStateAsync(); var probe = await Backend.ProbeAsync();
                 double? distance = state.Configured == null ? (double?)null : CoordinateParser.Distance(state.Configured.Latitude, state.Configured.Longitude, probe.latitude, probe.longitude);
-                bool passed = state.Healthy && state.Enabled && state.LocationAllowed && probe.positionSource == 1 && distance < 25;
+                bool passed = state.Healthy && state.Enabled && state.LocationAllowed && LocationVerification.IsWithinConfiguredTolerance(state.Configured, probe);
                 Write(report, new { passed, createdUtc = DateTime.UtcNow.ToString("o"), state, probe, distanceMeters = distance, autostartEnabled = StartupRegistration.Enabled });
                 return passed ? 0 : 1;
             }

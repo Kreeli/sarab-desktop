@@ -32,6 +32,12 @@ The expanded certificate embeds the original `src/assets/good_news.jpg` from [vo
 
 The sidebar/card visual design is inspired by [FlClash](https://github.com/chen08209/FlClash). Grouped appearance-setting interaction also takes cues from [Token-Monitor](https://github.com/Lazyzouo/Token-Monitor). No code or graphics from either project are bundled; the pin icon is independently drawn. Microsoft YaHei UI, Segoe UI and Segoe Fluent Icons are referenced as installed system fonts; no font files are redistributed.
 
+## Microsoft Visual C++ runtime
+
+Packages include Microsoft's signed `vcruntime140.dll` from the selected Visual Studio installation's `VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT` directory for application-local CLI loading, plus the unmodified official Visual C++ x64 Redistributable installer (version and SHA256 pinned in `dependencies.lock.json`). The full installer runs this offline prerequisite before opening the application; the UMDF driver requires a system runtime installation. The driver package itself is unchanged. These Microsoft components are proprietary and remain under Microsoft's Visual Studio redistribution terms and the runtime installer's Microsoft Software License Terms; this project's MIT license does not relicense them. Redistribution requires the build producer to hold the applicable Visual Studio license and comply with its REDIST list. See [Microsoft redistribution guidance](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files) and [Visual Studio 2022 redistribution list](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution).
+
+发布包附带选定 Visual Studio 的 REDIST 目录中经过微软签名验证的 `vcruntime140.dll`，用于 CLI 的应用本地加载，并离线附带官方、未修改的 Visual C++ x64 运行库安装器。完整 Setup 会先安装该系统依赖，再启动界面；UMDF 驱动仍需系统运行库。微软文件适用微软许可，发布者需遵守所用 Visual Studio 许可及 REDIST 清单，不适用本项目 MIT 许可。
+
 ## Installer
 
 Installers are produced using [Inno Setup](https://jrsoftware.org/), © Jordan Russell and Martijn Laan. The generated installer retains Inno Setup's own notices. Its compiler is not bundled with this application. The upstream license text is retained in `third_party/inno-setup/LICENSE`.

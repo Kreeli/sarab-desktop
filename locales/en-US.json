@@ -1,4 +1,7 @@
 {
+  "缺少 Microsoft Visual C++ x64 运行库。请重新运行完整安装程序，安装运行库后重试驱动安装。": "Microsoft Visual C++ x64 Runtime is missing. Run the full installer again to install the runtime, then retry driver installation.",
+  "配置文件超过 1 MiB 上限。": "The settings file exceeds the 1 MiB limit.",
+  "安装状态目录不安全，已停止管理员操作。请由管理员检查 ProgramData 中 SarabDesktop 目录的权限与链接。": "The installation state directory is unsafe. Administrator operations have been stopped. Ask an administrator to check permissions and links on the SarabDesktop directory in ProgramData.",
   " · 读数已过期，请重新核验": " · Reading expired; verify again",
   " 个。": " item(s).",
   " 个结果。选中后载入编辑，再决定是否应用。": " result(s). Load one into the editor before applying it.",

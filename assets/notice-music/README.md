@@ -2,7 +2,7 @@
 
 Source: Snabisch, [20 excellent 8 bit loops](https://opengameart.org/content/20-excellent-8-bit-loops), CC-BY 3.0.
 Converted from stereo 44.1 kHz / 16-bit PCM to mono 11.025 kHz / 8-bit PCM for compact retro-style playback.
-The desktop app embeds these files in `SarabDesktop.exe`; it extracts only the currently playing track to the user's temporary folder and removes it when playback ends or the certificate closes.
+The desktop app embeds these files in `SarabDesktop.exe` and plays PCM directly from memory through the built-in Windows waveform API. No temporary audio files, network access, media codecs or external player are required. Closing the certificate releases the audio device and memory buffer.
 
 | Embedded file | Original track |
 | --- | --- |

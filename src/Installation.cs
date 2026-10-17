@@ -13,6 +13,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 
 namespace SarabDesktop
 {
@@ -84,25 +85,103 @@ namespace SarabDesktop
             }
             return state;
         }
-        static void EnsureStateDirectory()
+        static IDisposable EnsureStateDirectory()
         {
-            Directory.CreateDirectory(StateDirectory);
-            var security = new DirectorySecurity(); security.SetAccessRuleProtection(true, false);
-            foreach (var sid in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid }) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-            new DirectoryInfo(StateDirectory).SetAccessControl(security);
+            var lease = new StateDirectoryLease();
+            try
+            {
+                var security = new DirectorySecurity(); security.SetAccessRuleProtection(true, false);
+                security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+                foreach (var sid in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid }) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+                security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+                string common = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+                // Never repair ACLs through an untrusted path: it may already be a junction.
+                for (var ancestor = new DirectoryInfo(common); ancestor != null; ancestor = ancestor.Parent)
+                    if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0) throw UnsafeStateDirectory();
+                foreach (string path in new[] { Path.Combine(common, "SarabDesktop"), StateDirectory })
+                {
+                    Directory.CreateDirectory(path, security);
+                    lease.Handles.Add(ValidateStateEntry(path, true));
+                }
+                foreach (string path in Directory.GetFileSystemEntries(StateDirectory))
+                    using (ValidateStateEntry(path, false)) { }
+                return lease;
+            }
+            catch { lease.Dispose(); throw; }
+        }
+        sealed class StateDirectoryLease : IDisposable
+        {
+            internal readonly List<SafeFileHandle> Handles = new List<SafeFileHandle>();
+            public void Dispose() { for (int i = Handles.Count - 1; i >= 0; i--) Handles[i].Dispose(); Handles.Clear(); }
+        }
+        static InvalidOperationException UnsafeStateDirectory() => new InvalidOperationException(L.T("安装状态目录不安全，已停止管理员操作。请由管理员检查 ProgramData 中 SarabDesktop 目录的权限与链接。"));
+        static SafeFileHandle ValidateStateEntry(string path, bool directory)
+        {
+            // Pin the actual entry, without following a link or permitting rename/delete.
+            var handle = OpenStateEntry(path, 0x00020080, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            try
+            {
+                StateFileInformation info;
+                if (handle.IsInvalid || !GetFileInformationByHandle(handle, out info) ||
+                    (info.Attributes & (uint)FileAttributes.ReparsePoint) != 0 ||
+                    ((info.Attributes & (uint)FileAttributes.Directory) != 0) != directory ||
+                    (!directory && info.NumberOfLinks != 1)) throw UnsafeStateDirectory();
+                IntPtr owner, group, dacl, sacl, descriptor;
+                uint result = GetSecurityInfo(handle, 1, 5, out owner, out group, out dacl, out sacl, out descriptor);
+                if (result != 0) throw UnsafeStateDirectory();
+                try
+                {
+                    byte[] bytes = new byte[checked((int)GetSecurityDescriptorLength(descriptor))];
+                    Marshal.Copy(descriptor, bytes, 0, bytes.Length);
+                    FileSystemSecurity security = directory ? (FileSystemSecurity)new DirectorySecurity() : new FileSecurity();
+                    security.SetSecurityDescriptorBinaryForm(bytes);
+                    if (!IsTrustedStateSecurity(security)) throw UnsafeStateDirectory();
+                }
+                finally { LocalFree(descriptor); }
+                return handle;
+            }
+            catch { handle.Dispose(); throw; }
+        }
+        [StructLayout(LayoutKind.Sequential)] struct StateFileInformation
+        {
+            public uint Attributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime, LastAccessTime, LastWriteTime;
+            public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow;
+        }
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern SafeFileHandle OpenStateEntry(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle, out StateFileInformation information);
+        [DllImport("advapi32.dll")] static extern uint GetSecurityInfo(SafeFileHandle handle, int type, uint information, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+        [DllImport("advapi32.dll")] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+        [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+        internal static bool IsTrustedStateSecurity(FileSystemSecurity security)
+        {
+            if (security == null || !IsPrivilegedStateIdentity((SecurityIdentifier)security.GetOwner(typeof(SecurityIdentifier)))) return false;
+            if (new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0).DiscretionaryAcl == null) return false;
+            const FileSystemRights mutation = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                if (rule.AccessControlType == AccessControlType.Allow &&
+                    (((uint)rule.FileSystemRights & ((uint)mutation | 0x10000000u | 0x40000000u)) != 0) &&
+                    !IsPrivilegedStateIdentity((SecurityIdentifier)rule.IdentityReference)) return false;
+            return true;
+        }
+        static bool IsPrivilegedStateIdentity(SecurityIdentifier sid)
+        {
+            return sid != null && (sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || sid.IsWellKnown(WellKnownSidType.LocalSystemSid));
         }
         public static void PrepareTestSigning()
         {
             var state = ReadPreflightAsync(true).GetAwaiter().GetResult();
             string reason = InstallationPolicy.PreparationBlockReason(state); if (reason != null) throw new InvalidOperationException(reason);
             if (state.TestSigning) return;
-            EnsureStateDirectory();
-            string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
-            string backup = Path.Combine(StateDirectory, "bcd-" + stamp + ".bak");
-            RunSystemTool("bcdedit.exe", "/export \"" + backup + "\"", 20000);
-            File.WriteAllText(Path.Combine(StateDirectory, "boot-" + stamp + ".json"), Json.To(new { createdUtc = DateTime.UtcNow.ToString("o"), backup, automaticRestart = false, operation = "EnableTestSigning", originallyActive = state.TestSigning }), new UTF8Encoding(false));
-            RunSystemTool("bcdedit.exe", "/set {current} testsigning on", 20000);
+            using (EnsureStateDirectory())
+            {
+                string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
+                string backup = Path.Combine(StateDirectory, "bcd-" + stamp + ".bak");
+                RunSystemTool("bcdedit.exe", "/export \"" + backup + "\"", 20000);
+                File.WriteAllText(Path.Combine(StateDirectory, "boot-" + stamp + ".json"), Json.To(new { createdUtc = DateTime.UtcNow.ToString("o"), backup, automaticRestart = false, operation = "EnableTestSigning", originallyActive = state.TestSigning }), new UTF8Encoding(false));
+                RunSystemTool("bcdedit.exe", "/set {current} testsigning on", 20000);
+                }
         }
         public static void InstallDriver()
         {
@@ -110,42 +189,48 @@ namespace SarabDesktop
             var state = ReadPreflightAsync().GetAwaiter().GetResult();
             if (!state.IsAmd64 || state.WindowsBuild < 17763) throw new InvalidOperationException(L.T("不支持当前系统架构或 Windows 版本。"));
             if (state.Driver.Healthy) return;
+            if (!File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "vcruntime140.dll")))
+                throw new InvalidOperationException(L.T("缺少 Microsoft Visual C++ x64 运行库。请重新运行完整安装程序，安装运行库后重试驱动安装。"));
             if (!state.TestSigning) throw new InvalidOperationException(L.T("测试签名尚未在本次启动中生效。请完成准备步骤、手动重启，然后重新打开安装引导。"));
-            EnsureStateDirectory();
-            string snapshotPath = Path.Combine(StateDirectory, "driver-before.json");
-            if (!File.Exists(snapshotPath)) File.WriteAllText(snapshotPath, Json.To(new { createdUtc = DateTime.UtcNow.ToString("o"), rootExisted = CertificateExists(StoreName.Root), publisherExisted = CertificateExists(StoreName.TrustedPublisher), driverExisted = state.Driver.Installed, certificateThumbprint = CertificateThumbprint }), new UTF8Encoding(false));
-            using (var key = Registry.LocalMachine.CreateSubKey(Backend.RegistryPath)) key.SetValue("Enabled", 0, RegistryValueKind.DWord);
-            RunTool(Backend.SarabPath, "driver install --inf \"" + Path.Combine(DriverDirectory, "SarabGnss.inf") + "\"", 90000);
-            DriverState after = null;
-            for (int i = 0; i < 8; i++) { after = Backend.ReadStateAsync().GetAwaiter().GetResult(); if (after.Healthy) break; Thread.Sleep(1500); }
-            if (after == null || !after.Healthy) throw new InvalidOperationException(L.T("未检测到正常工作的 Sarab 设备，未将安装器输出当成成功证明。请检查设备管理器，必要时手动重启。") + " (" + after?.ProblemCode + ")");
-            if (!CertificateExists(StoreName.Root) || !CertificateExists(StoreName.TrustedPublisher)) throw new InvalidOperationException(L.T("驱动证书存储检查失败，请查看安装日志。"));
+            using (EnsureStateDirectory())
+            {
+                string snapshotPath = Path.Combine(StateDirectory, "driver-before.json");
+                if (!File.Exists(snapshotPath)) File.WriteAllText(snapshotPath, Json.To(new { createdUtc = DateTime.UtcNow.ToString("o"), rootExisted = CertificateExists(StoreName.Root), publisherExisted = CertificateExists(StoreName.TrustedPublisher), driverExisted = state.Driver.Installed, certificateThumbprint = CertificateThumbprint }), new UTF8Encoding(false));
+                using (var key = Registry.LocalMachine.CreateSubKey(Backend.RegistryPath)) key.SetValue("Enabled", 0, RegistryValueKind.DWord);
+                RunTool(Backend.SarabPath, "driver install --inf \"" + Path.Combine(DriverDirectory, "SarabGnss.inf") + "\"", 90000);
+                DriverState after = null;
+                for (int i = 0; i < 8; i++) { after = Backend.ReadStateAsync().GetAwaiter().GetResult(); if (after.Healthy) break; Thread.Sleep(1500); }
+                if (after == null || !after.Healthy) throw new InvalidOperationException(L.T("未检测到正常工作的 Sarab 设备，未将安装器输出当成成功证明。请检查设备管理器，必要时手动重启。") + " (" + after?.ProblemCode + ")");
+                if (!CertificateExists(StoreName.Root) || !CertificateExists(StoreName.TrustedPublisher)) throw new InvalidOperationException(L.T("驱动证书存储检查失败，请查看安装日志。"));
+                }
         }
         public static void RemoveDriver()
         {
-            EnsureStateDirectory();
-            var devices = new List<string>(); var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var search = new ManagementObjectSearcher("SELECT DeviceID,HardwareID FROM Win32_PnPEntity"))
-            using (var results = search.Get())
-                foreach (ManagementObject item in results) if ((item["HardwareID"] as string[])?.Any(id => string.Equals(id, @"Root\SarabGnss", StringComparison.OrdinalIgnoreCase)) == true) devices.Add(Convert.ToString(item["DeviceID"]));
-            using (var search = new ManagementObjectSearcher("SELECT DeviceID,InfName FROM Win32_PnPSignedDriver"))
-            using (var results = search.Get())
-                foreach (ManagementObject item in results) if (devices.Contains(Convert.ToString(item["DeviceID"]), StringComparer.OrdinalIgnoreCase))
-                {
-                    string name = Convert.ToString(item["InfName"]);
-                    if (Regex.IsMatch(name, @"^oem\d+\.inf$", RegexOptions.IgnoreCase))
+            using (EnsureStateDirectory())
+            {
+                var devices = new List<string>(); var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using (var search = new ManagementObjectSearcher("SELECT DeviceID,HardwareID FROM Win32_PnPEntity"))
+                using (var results = search.Get())
+                    foreach (ManagementObject item in results) if ((item["HardwareID"] as string[])?.Any(id => string.Equals(id, @"Root\SarabGnss", StringComparison.OrdinalIgnoreCase)) == true) devices.Add(Convert.ToString(item["DeviceID"]));
+                using (var search = new ManagementObjectSearcher("SELECT DeviceID,InfName FROM Win32_PnPSignedDriver"))
+                using (var results = search.Get())
+                    foreach (ManagementObject item in results) if (devices.Contains(Convert.ToString(item["DeviceID"]), StringComparer.OrdinalIgnoreCase))
                     {
-                        string inf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF", name);
-                        if (!File.ReadAllText(inf).Contains(@"Root\SarabGnss")) throw new InvalidDataException(L.T("驱动包标识不匹配，已停止卸载。"));
-                        packages.Add(name);
+                        string name = Convert.ToString(item["InfName"]);
+                        if (Regex.IsMatch(name, @"^oem\d+\.inf$", RegexOptions.IgnoreCase))
+                        {
+                            string inf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF", name);
+                            if (!File.ReadAllText(inf).Contains(@"Root\SarabGnss")) throw new InvalidDataException(L.T("驱动包标识不匹配，已停止卸载。"));
+                            packages.Add(name);
+                        }
                     }
+                using (var key = Registry.LocalMachine.OpenSubKey(Backend.RegistryPath, true)) key?.SetValue("Enabled", 0, RegistryValueKind.DWord);
+                foreach (string id in devices) RunSystemTool("pnputil.exe", "/remove-device \"" + id + "\"", 30000);
+                foreach (string package in packages) RunSystemTool("pnputil.exe", "/delete-driver " + package + " /uninstall", 30000);
+                if (Backend.ReadStateAsync().GetAwaiter().GetResult().Installed) throw new InvalidOperationException(L.T("仍检测到 Sarab 设备，请检查设备管理器。"));
+                // Keep shared trust and global boot settings intact. They may be used by another installation.
+                File.AppendAllText(Path.Combine(StateDirectory, "operations.log"), DateTime.UtcNow.ToString("o") + " Removed Sarab devices; retained certificate and boot configuration.\r\n");
                 }
-            using (var key = Registry.LocalMachine.OpenSubKey(Backend.RegistryPath, true)) key?.SetValue("Enabled", 0, RegistryValueKind.DWord);
-            foreach (string id in devices) RunSystemTool("pnputil.exe", "/remove-device \"" + id + "\"", 30000);
-            foreach (string package in packages) RunSystemTool("pnputil.exe", "/delete-driver " + package + " /uninstall", 30000);
-            if (Backend.ReadStateAsync().GetAwaiter().GetResult().Installed) throw new InvalidOperationException(L.T("仍检测到 Sarab 设备，请检查设备管理器。"));
-            // Keep shared trust and global boot settings intact. They may be used by another installation.
-            File.AppendAllText(Path.Combine(StateDirectory, "operations.log"), DateTime.UtcNow.ToString("o") + " Removed Sarab devices; retained certificate and boot configuration.\r\n");
         }
         static bool CertificateExists(StoreName name) { using (var store = new X509Store(name, StoreLocation.LocalMachine)) { store.Open(OpenFlags.ReadOnly); return store.Certificates.Find(X509FindType.FindByThumbprint, CertificateThumbprint, false).Count > 0; } }
         static void RunSystemTool(string name, string arguments, int timeout) => RunTool(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), name), arguments, timeout);

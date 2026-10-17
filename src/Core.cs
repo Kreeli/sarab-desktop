@@ -72,6 +72,7 @@ namespace SarabDesktop
 
     public sealed class SettingsStore
     {
+        internal const int MaxSettingsBytes = 1024 * 1024;
         bool newerSchemaReadOnly, newerSchemaNoticeLogged;
         public string DirectoryPath { get; }
         public string FilePath => Path.Combine(DirectoryPath, "settings.json");
@@ -87,7 +88,7 @@ namespace SarabDesktop
             try
             {
                 if (!File.Exists(FilePath)) return new AppSettings();
-                string contents = File.ReadAllText(FilePath, Encoding.UTF8);
+                string contents = ReadBoundedSettings(FilePath);
                 var raw = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 }.DeserializeObject(contents) as Dictionary<string, object>;
                 object versionValue;
                 int version;
@@ -122,9 +123,27 @@ namespace SarabDesktop
             catch (Exception ex)
             {
                 var backup = FilePath + ".invalid-" + DateTime.Now.ToString("yyyyMMddHHmmss");
-                try { File.Copy(FilePath, backup); } catch { }
+                // An oversized original stays in place; do not duplicate an arbitrarily large file.
+                try { if (new FileInfo(FilePath).Length <= MaxSettingsBytes) File.Copy(FilePath, backup); } catch { }
                 Log(L.T("配置读取失败，原文件已尽量备份：") + ex.Message);
                 return new AppSettings();
+            }
+        }
+        static string ReadBoundedSettings(string path)
+        {
+            using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var bytes = new MemoryStream())
+            {
+                if (input.Length > MaxSettingsBytes) throw new InvalidDataException(L.T("配置文件超过 1 MiB 上限。"));
+                var chunk = new byte[8192];
+                int count;
+                while ((count = input.Read(chunk, 0, chunk.Length)) != 0)
+                {
+                    if (bytes.Length + count > MaxSettingsBytes) throw new InvalidDataException(L.T("配置文件超过 1 MiB 上限。"));
+                    bytes.Write(chunk, 0, count);
+                }
+                bytes.Position = 0;
+                using (var reader = new StreamReader(bytes, new UTF8Encoding(false, true), true)) return reader.ReadToEnd();
             }
         }
         public void Save(AppSettings settings)
@@ -138,9 +157,13 @@ namespace SarabDesktop
             settings.SidebarWidth = AppSettings.NormalizeSidebarWidth(settings.SidebarWidth);
             if (settings.Favorites == null || settings.Favorites.Count > 200) throw new InvalidDataException(L.T("最多支持 200 个收藏位置。"));
             foreach (var favorite in settings.Favorites) { if (favorite == null) throw new InvalidDataException(L.T("收藏中含空记录。")); favorite.Validate(); }
+            byte[] encoded = new UTF8Encoding(false).GetBytes(Json.To(settings));
+            if (encoded.Length > MaxSettingsBytes) throw new InvalidDataException(L.T("配置文件超过 1 MiB 上限。"));
             string temporary = FilePath + ".new";
-            File.WriteAllText(temporary, Json.To(settings), new UTF8Encoding(false));
-            if (File.Exists(FilePath)) File.Replace(temporary, FilePath, FilePath + ".backup");
+            File.WriteAllBytes(temporary, encoded);
+            // Keep the atomic replace and backup, but do not require extra ACL/metadata
+            // merge privileges on restricted profiles. The new file inherits this directory's ACL.
+            if (File.Exists(FilePath)) File.Replace(temporary, FilePath, FilePath + ".backup", true);
             else File.Move(temporary, FilePath);
         }
         public void Log(string message)
@@ -158,7 +181,19 @@ namespace SarabDesktop
         public string ReadLog()
         {
             string p = Path.Combine(DirectoryPath, "activity.log");
-            return File.Exists(p) ? string.Join(Environment.NewLine, File.ReadAllLines(p, Encoding.UTF8).Reverse().Take(180)) : L.T("还没有操作记录。");
+            if (!File.Exists(p)) return L.T("还没有操作记录。");
+            using (var input = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                const int tailBytes = 256 * 1024;
+                long start = Math.Max(0, input.Length - tailBytes);
+                input.Position = start;
+                byte[] bytes = new byte[tailBytes];
+                int length = 0, count;
+                while (length < bytes.Length && (count = input.Read(bytes, length, bytes.Length - length)) > 0) length += count;
+                string tail = Encoding.UTF8.GetString(bytes, 0, length);
+                if (start > 0) { int newline = tail.IndexOf('\n'); tail = newline < 0 ? "" : tail.Substring(newline + 1); }
+                return string.Join(Environment.NewLine, tail.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).Reverse().SkipWhile(line => line.Length == 0).Take(180));
+            }
         }
         public static string Protect(string value)
         {
